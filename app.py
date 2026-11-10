@@ -286,7 +286,8 @@ with tab_detail:
         symbol = st.selectbox("Choose a stock", choices,
                               index=choices.index(default_symbol), key="detail_symbol")
         row = result.loc[result["Symbol"] == symbol].iloc[0]
-        ticker = row["Ticker"]
+        # build_table removes its internal Ticker join key from the display result.
+        ticker = f"{str(row['Symbol']).strip()}.NS"
         if ticker not in prices.columns:
             st.warning("Price history is unavailable for this stock in the current scan.")
         else:
