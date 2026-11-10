@@ -1,1 +1,1 @@
-# WiseOwlScanNew
+# nse500-rs-scanner
