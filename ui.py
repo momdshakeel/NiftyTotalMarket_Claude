@@ -129,6 +129,7 @@ SPEC = {
     "Basic Industry": dict(t="Basic industry", type="txt", pri=3, left=True),
     "Liquid": dict(t="Liquid", type="chk", pri=2),
     "Avg_Traded_Value_20D_Cr": dict(t="20D ADTV ₹Cr", type="n1", pri=2),
+    "Market_Cap_Cr": dict(t="Mkt cap ₹Cr", type="n1", pri=2),
     "RS_Rating": dict(t="RS", type="rs", pri=1),
     "RS_Change": dict(t="Chg", type="chg", pri=2),
     "Stage": dict(t="Stage", type="stage", pri=2, left=True),
@@ -169,10 +170,10 @@ SPEC = {
     "Top_Stocks": dict(t="Leaders", type="text", pri=2, left=True),
 }
 COLS_DEFAULT = ["Symbol", "Company Name", "Sector", "Basic Industry", "Liquid",
-                "Avg_Traded_Value_20D_Cr", "RS_Rating", "RS_Change", "Stage", "TT_Score",
+                "Avg_Traded_Value_20D_Cr", "Market_Cap_Cr", "RS_Rating", "RS_Change", "Stage", "TT_Score",
                 "RS_Line_New_High", "RS_Blue_Dot", "RSI14", "Close", "Pct_From_52W_High",
                 "Pct_Above_52W_Low", "Weighted_Return_%"]
-COLS_PATTERN = ["Symbol", "RS_Rating", "Liquid", "Avg_Traded_Value_20D_Cr", "Stage", "TT_Score", "VCP", "VCP_Contractions", "Vol_Dry_Up",
+COLS_PATTERN = ["Symbol", "RS_Rating", "Liquid", "Avg_Traded_Value_20D_Cr", "Market_Cap_Cr", "Stage", "TT_Score", "VCP", "VCP_Contractions", "Vol_Dry_Up",
                 "VCP_Setup", "Pivot", "Pct_To_Pivot", "Close", "Vol_Breakout", "Breakout_Days_Ago",
                 "Breakout_Vol_x", "Vol_x_50d", "Stage1_Base", "Base_Days", "Base_Depth_%", "Basic Industry",
                 "Company Name"]

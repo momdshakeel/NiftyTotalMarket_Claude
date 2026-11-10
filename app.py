@@ -8,6 +8,7 @@ Files needed in the same folder: app.py, ui.py, nse500_rs_rating.py, requirement
 import io
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -15,6 +16,7 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import yfinance as yf
 from plotly.subplots import make_subplots
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -86,6 +88,22 @@ def compute(meta: pd.DataFrame):
     return result, as_of, datetime.now(IST), prices.shape[1], md, bench
 
 
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def fetch_market_caps(tickers: tuple[str, ...]) -> dict[str, float]:
+    """Fetch Yahoo Finance market caps in ₹ crore; missing values are omitted."""
+    def fetch_one(ticker: str):
+        try:
+            value = yf.Ticker(ticker).fast_info["market_cap"]
+            value = float(value)
+            return ticker, value / 10_000_000 if value > 0 else None
+        except Exception:
+            return ticker, None
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        pairs = executor.map(fetch_one, tickers)
+        return {ticker: value for ticker, value in pairs if value is not None}
+
+
 meta = fetch_universe()
 if meta is None:
     st.warning("Could not download the Nifty Total Market constituent list. Upload "
@@ -115,6 +133,9 @@ with st.sidebar:
     pick_ind = st.multiselect("Basic industry", industries)
     liquid_only = st.checkbox("Only show liquid stocks", value=False,
                               help="Liquid means average close × volume of at least ₹10 crore over the last 20 sessions.")
+    min_market_cap = st.selectbox("Minimum market cap", [0, 500, 1000], format_func=lambda v: {
+        0: "Any market cap", 500: "> ₹500 Cr", 1000: "> ₹1,000 Cr"
+    }[v], help="Yahoo Finance market cap, cached for 24 hours. Fetching it for the full universe happens only when a cap filter is selected.")
     q = st.text_input("Search symbol / company")
     st.divider()
     st.caption(f"Prices as of **{as_of.date()}**  \nFetched {fetched_at:%d %b %Y, %H:%M} IST  \n"
@@ -124,11 +145,23 @@ with st.sidebar:
         st.rerun()
 
 # ---------------- Apply filters ----------------
+if min_market_cap:
+    cap_tickers = tuple(sorted({f"{str(s).strip()}.NS" for s in result["Symbol"].dropna()}))
+    with st.spinner("Loading market caps for the Nifty Total Market stocks…"):
+        market_caps = fetch_market_caps(cap_tickers)
+    result["Market_Cap_Cr"] = result["Symbol"].map(
+        lambda s: market_caps.get(f"{str(s).strip()}.NS") if pd.notna(s) else None)
+    cap_coverage = int(result["Market_Cap_Cr"].notna().sum())
+    if cap_coverage < len(result):
+        st.warning(f"Market cap data is available for {cap_coverage} of {len(result)} rated stocks. Stocks without a value are excluded by the active cap filter.")
+
 df = result[result["RS_Rating"] >= min_rs]
 if pick_ind:
     df = df[df["Basic Industry"].isin(pick_ind)]
 if liquid_only:
     df = df[df["Liquid"].fillna(False)]
+if min_market_cap:
+    df = df[df["Market_Cap_Cr"] > min_market_cap]
 if q.strip():
     s = q.strip().lower()
     df = df[df["Symbol"].str.lower().str.contains(s, regex=False)
