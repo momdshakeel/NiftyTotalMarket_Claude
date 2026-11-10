@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 import requests
 import streamlit as st
@@ -237,6 +238,103 @@ def show_breadth():
                        key="dl_liquid_breadth")
 
 
+def detect_base_history(bars: pd.DataFrame) -> list[dict]:
+    """Find distinct base episodes in roughly the last 12 months for the stock chart."""
+    data = bars.tail(252).copy()
+    if len(data) < min(m.BASE_WINDOWS):
+        return []
+    close = data["Close"].to_numpy(float)
+    high = data["High"].to_numpy(float)
+    low = data["Low"].to_numpy(float)
+    volume = data["Volume"].to_numpy(float)
+    avg_volume = bars["Volume"].shift(1).rolling(50).mean().reindex(data.index).to_numpy(float)
+    sma50 = bars["Close"].rolling(50).mean().reindex(data.index).to_numpy(float)
+    dates = data.index
+    found: list[dict] = []
+    cursor = 0
+    n = len(data)
+
+    while cursor + min(m.BASE_WINDOWS) <= n:
+        candidate = None
+        for end in range(cursor + min(m.BASE_WINDOWS) - 1, n):
+            for window in sorted(m.BASE_WINDOWS, reverse=True):
+                start = end - window + 1
+                if start < cursor:
+                    continue
+                segment_high = float(high[start:end + 1].max())
+                segment_low = float(low[start:end + 1].min())
+                depth = (segment_high - segment_low) / segment_high if segment_high else 1.0
+                drift = close[end] / close[start] - 1 if close[start] else 1.0
+                if depth <= m.MAX_BASE_DEPTH and abs(drift) <= m.MAX_BASE_DRIFT:
+                    candidate = {"start": start, "end": end, "pivot": segment_high,
+                                 "low": segment_low, "depth": depth * 100,
+                                 "window": window}
+                    break
+            if candidate:
+                break
+        if candidate is None:
+            break
+
+        start = candidate["start"]
+        base_end = candidate["end"]
+        pivot = candidate["pivot"]
+        base_low = candidate["low"]
+        breakout_at = None
+        failed_before_breakout = False
+        scan_end = min(n - 1, start + max(m.BASE_WINDOWS))
+        for j in range(candidate["end"] + 1, scan_end + 1):
+            if close[j] > pivot:
+                breakout_at = j
+                base_end = j - 1
+                break
+            base_end = j
+            pivot = max(pivot, float(high[j]))
+            base_low = min(base_low, float(low[j]))
+            if close[j] < base_low * 0.92:
+                failed_before_breakout = True
+                break
+
+        if breakout_at is not None:
+            post = np.arange(breakout_at, n)
+            failure = next((int(j) for j in post
+                            if close[j] < pivot * 0.92 or
+                            (np.isfinite(sma50[j]) and close[j] < sma50[j])), None)
+            outcome_end = failure if failure is not None else n - 1
+            best_pct = (float(high[breakout_at:outcome_end + 1].max()) / pivot - 1) * 100
+            now_pct = (float(close[n - 1]) / pivot - 1) * 100
+            vol_x = (volume[breakout_at] / avg_volume[breakout_at]
+                     if np.isfinite(avg_volume[breakout_at]) and avg_volume[breakout_at] > 0 else np.nan)
+            if failure is not None:
+                status = f"Failed {dates[failure]:%d %b %y} · best +{best_pct:.1f}% first"
+            else:
+                status = f"Holding · best +{best_pct:.1f}% · now {now_pct:+.1f}%"
+            cursor = breakout_at + 1
+        elif failed_before_breakout:
+            vol_x = np.nan
+            status = "Failed · no breakout"
+            cursor = base_end + 1
+        else:
+            vol_x = np.nan
+            under_pivot = (1 - close[n - 1] / pivot) * 100
+            status = f"Forming · {under_pivot:.1f}% under pivot"
+            cursor = n
+
+        base_days = base_end - start + 1
+        box = data.iloc[start:base_end + 1]
+        found.append({
+            "Started": dates[start], "Length": f"{max(1, round(base_days / 5))} wk",
+            "Depth": f"{(1 - float(box['Low'].min()) / float(box['High'].max())) * 100:.0f}%",
+            "Pivot": float(box["High"].max()),
+            "Breakout": dates[breakout_at] if breakout_at is not None else None,
+            "Volume": f"{vol_x:.1f}×" if np.isfinite(vol_x) else "—",
+            "Then": status, "_Start": dates[start], "_End": dates[base_end],
+            "_Low": float(box["Low"].min()), "_High": float(box["High"].max()),
+        })
+        if cursor <= candidate["end"]:
+            cursor = candidate["end"] + 1
+    return found
+
+
 (tab_top, tab_tt, tab_vcp, tab_brk, tab_s1, tab_blue, tab_ind, tab_all, tab_detail, tab_breadth) = st.tabs([
     f"Top picks · {len(top)}", f"Trend Template · {len(tt)}", f"VCP setups · {len(vcp)}",
     f"Breakouts · {len(brk)}", f"Stage 1 bases · {len(s1)}", f"RS blue dot · {len(blue)}",
@@ -315,7 +413,11 @@ with tab_detail:
             bars["Volume SMA 50"] = bars["Volume"].rolling(50).mean()
             bars["RS line"] = bars["Close"].div(bench.reindex(bars.index).ffill())
             bars["RS line"] = bars["RS line"].div(bars["RS line"].dropna().iloc[0]).mul(100)
-            chart = bars.tail(history_days[period])
+            base_history = detect_base_history(bars)
+            chart = bars.tail(history_days[period]).copy()
+            rs_visible = chart["RS line"].dropna()
+            if not rs_visible.empty:
+                chart.loc[:, "RS line"] = chart["RS line"].div(rs_visible.iloc[0]).mul(100)
 
             fig = make_subplots(
                 rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.035,
@@ -343,21 +445,21 @@ with tab_detail:
             fig.add_trace(go.Scatter(x=chart.index, y=chart["RS line"], name="RS line",
                                      mode="lines", line=dict(color="#16834c", width=2)), row=3, col=1)
 
-            if show_base and bool(row.get("Base_Forming", False)):
-                base_days = int(row.get("Base_Days", 0) or 0)
-                if base_days > 0 and len(bars) >= base_days:
-                    base = bars.tail(base_days)
-                    base_start = max(base.index[0], chart.index[0])
+            if show_base:
+                for base_number, base in enumerate(base_history, start=1):
+                    if base["_End"] < chart.index[0] or base["_Start"] > chart.index[-1]:
+                        continue
+                    x0 = max(base["_Start"], chart.index[0])
+                    x1 = min(base["_End"], chart.index[-1])
                     fig.add_shape(type="rect", xref="x", yref="y",
-                                  x0=base_start, x1=chart.index[-1],
-                                  y0=base["Low"].min(), y1=base["High"].max(),
+                                  x0=x0, x1=x1, y0=base["_Low"], y1=base["_High"],
                                   line=dict(color="#3487d8", width=1.5, dash="dash"),
                                   fillcolor="rgba(52,135,216,0.10)")
-                    fig.add_annotation(x=base_start, y=base["High"].max(), xref="x", yref="y",
-                                       text=f"Base · {base_days} sessions · {row.get('Base_Depth_%', 0):.1f}% deep",
-                                       showarrow=False, xanchor="left", yanchor="bottom",
+                    fig.add_annotation(x=x0, y=base["_High"], xref="x", yref="y",
+                                       text=f"B{base_number}", showarrow=False,
+                                       xanchor="left", yanchor="bottom",
                                        font=dict(size=10, color="#2467a8"),
-                                       bgcolor="rgba(255,255,255,0.75)")
+                                       bgcolor="rgba(255,255,255,0.78)")
             if show_pivot:
                 pivot = row.get("Pivot")
                 if pd.notna(pivot):
@@ -383,6 +485,23 @@ with tab_detail:
             fig.update_yaxes(title_text="Shares", row=2, col=1, gridcolor="#e7eaf0")
             fig.update_yaxes(title_text="RS (100)", row=3, col=1, gridcolor="#e7eaf0")
             st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+            st.markdown("### Base history · last 12 months · newest first")
+            if base_history:
+                history_rows = []
+                for base_number, base in reversed(list(enumerate(base_history, start=1))):
+                    history_rows.append({
+                        "Base": f"B{base_number}",
+                        "Started": base["Started"].strftime("%d %b %y"),
+                        "Length": base["Length"], "Depth": base["Depth"],
+                        "Pivot": round(base["Pivot"], 2),
+                        "Breakout": base["Breakout"].strftime("%d %b %y") if base["Breakout"] is not None else "—",
+                        "Volume": base["Volume"], "Then": base["Then"],
+                    })
+                st.dataframe(pd.DataFrame(history_rows), hide_index=True,
+                             use_container_width=True, height=min(42 * len(history_rows) + 44, 330))
+                st.caption("Failed means the stock closed 8% below the pivot or below its 50-day average after breakout. History, not a forecast.")
+            else:
+                st.info("No bases met the scanner's range and sideways-drift rules in the last 12 months.")
             metric_cols = st.columns(5)
             for col, label, value in zip(
                     metric_cols,

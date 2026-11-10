@@ -9,7 +9,7 @@ A Streamlit scanner for Nifty Total Market constituents. The official index comb
 - Basic-industry strength and market breadth summaries calculated from liquid stocks only.
 - Breadth percentages for liquid stocks above their 50, 150 and 200-day averages, plus Trend Template and Stage 2 counts.
 - Stock detail candlesticks with EMA 10/21, SMA 50/200, volume with its 50-session average, and a relative-strength panel against Nifty 500.
-- A detected consolidation base is drawn as a shaded rectangle; pivot and 52-week-high levels can be toggled.
+- Historical consolidation bases are drawn as shaded rectangles. A newest-first 12-month base-history table reports start, length, depth, pivot, breakout, breakout volume and outcome; pivot and 52-week-high levels can be toggled.
 - Search, industry filters, downloadable CSVs, cached data and manual refresh.
 
 ## Run locally
