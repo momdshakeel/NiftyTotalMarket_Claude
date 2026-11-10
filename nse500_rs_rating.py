@@ -129,8 +129,8 @@ def _clean_index(obj):
 
 
 def download_market_data(tickers):
-    """Download adjusted OHLCV. Returns {"Close","High","Low","Volume"} DataFrames."""
-    fields = ("Close", "High", "Low", "Volume")
+    """Download adjusted OHLCV. Returns Open, High, Low, Close and Volume panels."""
+    fields = ("Open", "Close", "High", "Low", "Volume")
     frames = {k: [] for k in fields}
     for i in range(0, len(tickers), BATCH_SIZE):
         batch = tickers[i:i + BATCH_SIZE]
@@ -159,7 +159,7 @@ def download_market_data(tickers):
     keep = close.columns[~stale]
 
     out = {"Close": close[keep].ffill()}
-    for k in ("High", "Low"):
+    for k in ("Open", "High", "Low"):
         out[k] = panels[k].reindex(index=close.index, columns=keep).ffill()
     out["Volume"] = panels["Volume"].reindex(index=close.index, columns=keep)
     return out

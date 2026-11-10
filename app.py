@@ -11,8 +11,10 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import plotly.graph_objects as go
 import requests
 import streamlit as st
+from plotly.subplots import make_subplots
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -80,7 +82,7 @@ def compute(meta: pd.DataFrame):
     prices = md["Close"]
     bench = m.get_benchmark()
     result, as_of = m.build_table(prices, bench, meta, ohlcv=md)
-    return result, as_of, datetime.now(IST), prices.shape[1], prices, bench
+    return result, as_of, datetime.now(IST), prices.shape[1], md, bench
 
 
 meta = fetch_universe()
@@ -94,7 +96,8 @@ if meta is None:
 
 try:
     with st.spinner("Downloading Nifty Total Market stocks from Yahoo Finance (first load may take several minutes)..."):
-        result, as_of, fetched_at, n_prices, prices, bench = compute(meta)
+        result, as_of, fetched_at, n_prices, market_data, bench = compute(meta)
+        prices = market_data["Close"]
 except Exception as e:
     st.error(f"Data download failed: {e}")
     if st.button("Retry"):
@@ -294,32 +297,92 @@ with tab_detail:
             history_days = {"3 months": 63, "6 months": 126, "1 year": 252, "2 years": 504}
             period = st.radio("Chart period", list(history_days), index=2, horizontal=True,
                               key="detail_period")
-            close = prices[ticker].dropna()
-            close = close.tail(history_days[period])
-            chart = pd.DataFrame({"Close": close})
-            full_close = prices[ticker].dropna()
-            for window in (50, 150, 200):
-                ma = full_close.rolling(window).mean().reindex(close.index)
-                if ma.notna().any():
-                    chart[f"SMA {window}"] = ma
-            left, right = st.columns([3, 2])
-            with left:
-                st.markdown("#### Price and moving averages")
-                st.line_chart(chart, use_container_width=True)
-            with right:
-                st.markdown("#### Relative performance")
-                benchmark = bench.reindex(full_close.index).ffill()
-                relative = full_close.div(benchmark).dropna().tail(history_days[period])
-                if not relative.empty:
-                    relative_indexed = relative.div(relative.iloc[0]).mul(100)
-                    benchmark_indexed = benchmark.reindex(relative.index).div(
-                        benchmark.reindex(relative.index).iloc[0]).mul(100)
-                    st.line_chart(pd.DataFrame({"Stock": relative_indexed,
-                                                "Benchmark": benchmark_indexed}),
-                                  use_container_width=True)
-                    st.caption("Both lines start at 100. A rising stock line versus the benchmark indicates relative outperformance.")
-                else:
-                    st.info("Benchmark history is unavailable for this period.")
+            show_base = st.checkbox("Draw detected base", value=True, key="detail_show_base")
+            show_pivot = st.checkbox("Show pivot and 52-week high", value=True,
+                                     key="detail_show_pivot")
+            close_all = prices[ticker].dropna()
+            bars = pd.DataFrame({
+                "Open": market_data["Open"][ticker].reindex(close_all.index),
+                "High": market_data["High"][ticker].reindex(close_all.index),
+                "Low": market_data["Low"][ticker].reindex(close_all.index),
+                "Close": close_all,
+                "Volume": market_data["Volume"][ticker].reindex(close_all.index),
+            }).dropna(subset=["Open", "High", "Low", "Close"])
+            bars["EMA 10"] = bars["Close"].ewm(span=10, adjust=False).mean()
+            bars["EMA 21"] = bars["Close"].ewm(span=21, adjust=False).mean()
+            bars["SMA 50"] = bars["Close"].rolling(50).mean()
+            bars["SMA 200"] = bars["Close"].rolling(200).mean()
+            bars["Volume SMA 50"] = bars["Volume"].rolling(50).mean()
+            bars["RS line"] = bars["Close"].div(bench.reindex(bars.index).ffill())
+            bars["RS line"] = bars["RS line"].div(bars["RS line"].dropna().iloc[0]).mul(100)
+            chart = bars.tail(history_days[period])
+
+            fig = make_subplots(
+                rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.035,
+                row_heights=[0.62, 0.18, 0.20],
+                subplot_titles=(f"{symbol} · daily candles", "Volume", "RS line vs Nifty 500 · rebased to 100"),
+            )
+            fig.add_trace(go.Candlestick(
+                x=chart.index, open=chart["Open"], high=chart["High"],
+                low=chart["Low"], close=chart["Close"], name="OHLC",
+                increasing_line_color="#12805c", decreasing_line_color="#c74440",
+                increasing_fillcolor="#12805c", decreasing_fillcolor="#c74440",
+            ), row=1, col=1)
+            for col, color in (("EMA 10", "#202c25"), ("EMA 21", "#f59e0b"),
+                               ("SMA 50", "#3478c8"), ("SMA 200", "#d33b3b")):
+                fig.add_trace(go.Scatter(x=chart.index, y=chart[col], name=col,
+                                         mode="lines", line=dict(color=color, width=1.5)),
+                              row=1, col=1)
+            volume_colors = ["#12805c" if c >= o else "#c74440"
+                             for o, c in zip(chart["Open"], chart["Close"])]
+            fig.add_trace(go.Bar(x=chart.index, y=chart["Volume"], name="Volume",
+                                 marker_color=volume_colors, opacity=0.72), row=2, col=1)
+            fig.add_trace(go.Scatter(x=chart.index, y=chart["Volume SMA 50"],
+                                     name="Volume SMA 50", mode="lines",
+                                     line=dict(color="#697386", width=1, dash="dot")), row=2, col=1)
+            fig.add_trace(go.Scatter(x=chart.index, y=chart["RS line"], name="RS line",
+                                     mode="lines", line=dict(color="#16834c", width=2)), row=3, col=1)
+
+            if show_base and bool(row.get("Base_Forming", False)):
+                base_days = int(row.get("Base_Days", 0) or 0)
+                if base_days > 0 and len(bars) >= base_days:
+                    base = bars.tail(base_days)
+                    base_start = max(base.index[0], chart.index[0])
+                    fig.add_shape(type="rect", xref="x", yref="y",
+                                  x0=base_start, x1=chart.index[-1],
+                                  y0=base["Low"].min(), y1=base["High"].max(),
+                                  line=dict(color="#3487d8", width=1.5, dash="dash"),
+                                  fillcolor="rgba(52,135,216,0.10)")
+                    fig.add_annotation(x=base_start, y=base["High"].max(), xref="x", yref="y",
+                                       text=f"Base · {base_days} sessions · {row.get('Base_Depth_%', 0):.1f}% deep",
+                                       showarrow=False, xanchor="left", yanchor="bottom",
+                                       font=dict(size=10, color="#2467a8"),
+                                       bgcolor="rgba(255,255,255,0.75)")
+            if show_pivot:
+                pivot = row.get("Pivot")
+                if pd.notna(pivot):
+                    fig.add_hline(y=float(pivot), row=1, col=1,
+                                  line_color="#8b5cf6", line_dash="dash", line_width=1.2,
+                                  annotation_text=f"Pivot ₹{float(pivot):.2f}",
+                                  annotation_position="top left")
+                high_52 = close_all.tail(252).max()
+                if pd.notna(high_52):
+                    fig.add_hline(y=float(high_52), row=1, col=1,
+                                  line_color="#b97725", line_dash="dot", line_width=1,
+                                  annotation_text=f"52W high ₹{float(high_52):.2f}",
+                                  annotation_position="top right")
+            fig.update_layout(
+                height=780, template="plotly_white", hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0),
+                margin=dict(l=12, r=16, t=70, b=12),
+                xaxis_rangeslider_visible=False,
+            )
+            fig.update_xaxes(rangeslider_visible=False, showgrid=True, gridcolor="#e7eaf0")
+            fig.update_yaxes(title_text="Price (₹)", row=1, col=1, gridcolor="#e7eaf0")
+            fig.update_yaxes(title_text="Shares", row=2, col=1, gridcolor="#e7eaf0")
+            fig.update_yaxes(title_text="RS (100)", row=3, col=1, gridcolor="#e7eaf0")
+            st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
             metric_cols = st.columns(5)
             for col, label, value in zip(
                     metric_cols,
