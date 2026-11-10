@@ -1,1 +1,0 @@
-# nse500-rs-scanner
