@@ -33,7 +33,6 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 import warnings
-from datetime import datetime, timedelta, timezone
 import requests
 from urllib.parse import quote
 import numpy as np
@@ -726,47 +725,6 @@ def market_breadth(result, liquid_only=True):
         "new_52w_highs": int((r["Pct_From_52W_High"] >= 0).sum()),
         "new_52w_lows": int((r["Pct_Above_52W_Low"] <= 0).sum()),
     }
-
-
-# ---------------- 4c. Saving / loading results (used by the daily job and the app) ----------------
-IST = timezone(timedelta(hours=5, minutes=30))
-
-
-def save_results(result, as_of, out_dir="data", extra=None):
-    """Write data/latest.csv (the full scan table) and data/meta.json (when it was made)."""
-    os.makedirs(out_dir, exist_ok=True)
-    result.to_csv(os.path.join(out_dir, "latest.csv"), index=False, encoding="utf-8")
-    info = {"as_of": str(pd.Timestamp(as_of).date()),
-            "generated_at": datetime.now(IST).isoformat(timespec="seconds"),
-            "rated": int(len(result)),
-            "liquid": int(result["Liquid"].sum()) if "Liquid" in result.columns else None}
-    info.update(extra or {})
-    with open(os.path.join(out_dir, "meta.json"), "w", encoding="utf-8") as f:
-        json.dump(info, f, indent=2)
-    return info
-
-
-def load_saved_results(base):
-    """Read what save_results wrote. `base` = a folder path or a URL prefix
-    (e.g. https://raw.githubusercontent.com/you/repo/main/data). Returns (table, info dict)."""
-    base = str(base)
-    if base.startswith("http"):
-        base = base.rstrip("/")
-        df = pd.read_csv(base + "/latest.csv")
-        r = requests.get(base + "/meta.json", headers=_HEADERS, timeout=30)
-        r.raise_for_status()
-        info = r.json()
-    else:
-        df = pd.read_csv(os.path.join(base, "latest.csv"))
-        with open(os.path.join(base, "meta.json"), encoding="utf-8") as f:
-            info = json.load(f)
-    for c in df.columns:                               # True/False columns can come back as text
-        if df[c].dtype == object:
-            vals = set(df[c].dropna().unique())
-            if vals and vals <= {"True", "False", True, False}:
-                df[c] = (df[c].map({"True": True, "False": False, True: True, False: False})
-                         .fillna(False).astype(bool))
-    return df, info
 
 
 # ---------------- 5. Web dashboard (single self-contained HTML file) ----------------

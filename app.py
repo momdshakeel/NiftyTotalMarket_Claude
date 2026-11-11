@@ -5,13 +5,8 @@ liquidity flag, market breadth and sector / industry strength.
 
 Run locally:   pip install -r requirements.txt && streamlit run app.py
 Deploy free:   push this folder to GitHub -> share.streamlit.io -> New app -> app.py
-
-How the data arrives: a daily GitHub Actions job (build_data.py, see .github/workflows/) saves the
-results to data/latest.csv after the market closes, and this app just reads them - so it opens in
-seconds. Until the first daily run exists, the app falls back to calculating everything live.
-
-Files in the repository: app.py, ui.py, nse500_rs_rating.py, build_data.py, requirements.txt,
-.github/workflows/daily_scan.yml   (optional: nse_classification.csv, .streamlit/config.toml)
+Files needed in the same folder: app.py, ui.py, nse500_rs_rating.py, requirements.txt
+Optional:      nse_classification.csv (NSE industry / basic industry), ind_niftytotalmarket_list.csv
 """
 import os
 import sys
@@ -42,35 +37,20 @@ ui.inject_css(font)
 
 
 # ---------------- Data loading (cached, shared by all visitors) ----------------
-DATA_DIR = os.path.join(HERE, "data")
-LATEST = os.path.join(DATA_DIR, "latest.csv")
-# Optional: if the app ever shows old data, put your repository's raw data folder here, e.g.
-#   DATA_URL = "https://raw.githubusercontent.com/YOUR-NAME/YOUR-REPO/main/data"
-DATA_URL = ""
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def load_saved(key):
-    """Results saved by the daily job. `key` (URL or file timestamp) only makes the cache
-    refresh when new data arrives."""
-    return m.load_saved_results(key if isinstance(key, str) else DATA_DIR)
-
-
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
 def fetch_universe():
-    """Live fallback: Nifty Total Market list from NSE -> local copy -> Nifty 500 + Microcap 250."""
+    """Nifty Total Market list: NSE -> local ind_niftytotalmarket_list.csv -> Nifty 500 + Microcap 250."""
     return m.load_universe(local_file=os.path.join(HERE, m.LOCAL_UNIVERSE_FILE))
 
 
 @st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
 def load_shares(tickers: tuple):
-    """Live fallback: shares outstanding from Yahoo (cached for a week)."""
+    """Shares outstanding from Yahoo (they change rarely, so cached for a week)."""
     return m.download_shares(list(tickers))
 
 
 @st.cache_data(ttl=CACHE_HOURS * 3600, show_spinner=False)
 def compute(meta: pd.DataFrame, shares: pd.Series):
-    """Live fallback: download everything and calculate inside the app (3-5 minutes)."""
     md = m.download_market_data(meta["Ticker"].tolist())
     prices = md["Close"]
     bench = m.get_benchmark()
@@ -78,55 +58,32 @@ def compute(meta: pd.DataFrame, shares: pd.Series):
     return result, as_of, datetime.now(IST), prices.shape[1]
 
 
-saved = None
-if DATA_URL:
-    try:
-        saved = load_saved(DATA_URL)
-    except Exception:
-        saved = None
-if saved is None and os.path.exists(LATEST):
-    try:
-        saved = load_saved(os.path.getmtime(LATEST))
-    except Exception as e:
-        st.warning(f"Could not read the saved data ({e}). Calculating live instead.")
-
-if saved is not None:
-    mode = "saved"
-    result, info = saved
-    as_of = pd.Timestamp(info["as_of"])
-    fetched_at = datetime.fromisoformat(info["generated_at"])
-    n_universe = int(info.get("universe", len(result)))
-else:
-    mode = "live"
-    st.info("No saved daily data found yet, so the app is calculating everything live. This takes "
-            "3-5 minutes. Once the daily GitHub job has run, this page will open in seconds.")
-    meta = fetch_universe()
-    if meta is None:
-        st.warning("Could not download the Nifty Total Market list from NSE. Upload "
-                   "`ind_niftytotalmarket_list.csv` (nseindia.com → Indices → Nifty Total Market → "
-                   "Download list), or add it to the app folder.")
-        up = st.file_uploader("ind_niftytotalmarket_list.csv", type="csv")
-        if up is None:
-            st.stop()
-        meta = m.parse_universe(pd.read_csv(up))
-    meta = m.attach_classification(meta, m.load_classification(os.path.join(HERE, m.CLASSIFICATION_FILE)))
-    n_universe = len(meta)
-
-    try:
-        with st.spinner("Downloading ~750 stocks from Yahoo Finance (first load takes 3-5 minutes)..."):
-            if st.session_state.get("shares_failed"):             # Yahoo throttled us: retry on Refresh only
-                shares = pd.Series(float("nan"), index=meta["Ticker"])
-            else:
-                shares = load_shares(tuple(meta["Ticker"]))
-                if shares.notna().mean() < 0.5:                   # don't keep a bad result for a week
-                    load_shares.clear()
-                    st.session_state["shares_failed"] = True
-            result, as_of, fetched_at, n_prices = compute(meta, shares)
-    except Exception as e:
-        st.error(f"Data download failed: {e}")
-        if st.button("Retry"):
-            st.rerun()
+meta = fetch_universe()
+if meta is None:
+    st.warning("Could not download the Nifty Total Market list from NSE. Upload "
+               "`ind_niftytotalmarket_list.csv` (nseindia.com → Indices → Nifty Total Market → "
+               "Download list), or add it to the app folder.")
+    up = st.file_uploader("ind_niftytotalmarket_list.csv", type="csv")
+    if up is None:
         st.stop()
+    meta = m.parse_universe(pd.read_csv(up))
+meta = m.attach_classification(meta, m.load_classification(os.path.join(HERE, m.CLASSIFICATION_FILE)))
+
+try:
+    with st.spinner("Downloading ~750 stocks from Yahoo Finance (first load takes 3-5 minutes)..."):
+        if st.session_state.get("shares_failed"):             # Yahoo throttled us: retry on Refresh only
+            shares = pd.Series(float("nan"), index=meta["Ticker"])
+        else:
+            shares = load_shares(tuple(meta["Ticker"]))
+            if shares.notna().mean() < 0.5:                   # don't keep a bad result for a week
+                load_shares.clear()
+                st.session_state["shares_failed"] = True
+        result, as_of, fetched_at, n_prices = compute(meta, shares)
+except Exception as e:
+    st.error(f"Data download failed: {e}")
+    if st.button("Retry"):
+        st.rerun()
+    st.stop()
 
 has_cls = bool(result["Basic Industry"].notna().any()) if "Basic Industry" in result.columns else False
 n_liquid = int(result["Liquid"].sum())
@@ -150,8 +107,8 @@ with st.sidebar:
         n_unk = int(result["Market_Cap_Cr"].isna().sum())
         st.caption(f"{n_cap} stocks above ₹{min_cap:,} cr · {n_unk} with unknown market cap")
     else:
-        st.caption("⚠️ Market cap data is missing from the current data, so this filter is off. "
-                   "It is usually back after the next daily update.")
+        st.caption("⚠️ Market cap data unavailable from Yahoo right now, so this filter is off. "
+                   "Click *Refresh data now* to retry.")
     min_rs = st.slider("Minimum RS Rating", 1, 99, 1)
     pref_rs = st.slider("RS for 'Top picks'", 50, 99, m.PREFERRED_RS)
     rsi_min = st.slider("RSI above (Top picks)", 0, 80, 50)
@@ -160,15 +117,12 @@ with st.sidebar:
                   if has_cls else [])
     q = st.text_input("Search symbol / company")
     st.divider()
-    st.caption(f"Prices as of **{as_of.date()}**  \nUpdated {fetched_at:%d %b %Y, %H:%M} IST  \n" +
-               ("Refreshed automatically every weekday evening (~5 pm IST)" if mode == "saved"
-                else f"Live calculation - refreshes every {CACHE_HOURS} hours"))
-    if st.button("🔄 Reload latest data", use_container_width=True):
-        load_saved.clear()
-        if mode == "live":
-            compute.clear()
-            fetch_universe.clear()
-            st.session_state.pop("shares_failed", None)
+    st.caption(f"Prices as of **{as_of.date()}**  \nFetched {fetched_at:%d %b %Y, %H:%M} IST  \n"
+               f"Auto-refreshes every {CACHE_HOURS} hours")
+    if st.button("🔄 Refresh data now", use_container_width=True):
+        compute.clear()
+        fetch_universe.clear()
+        st.session_state.pop("shares_failed", None)
         st.rerun()
 
 # ---------------- Apply filters ----------------
@@ -201,12 +155,8 @@ s1 = df[df.Stage1_Base].sort_values("Base_Days", ascending=False)
 ui.hero("RS Rating Scanner",
         "Relative-strength ranking, Minervini Trend Template, VCP setups, volume breakouts, Weinstein "
         "stages, market breadth and sector strength across the Nifty Total Market (Nifty 500 + Microcap 250).",
-        [f"<b>As of</b> {as_of:%d %b %Y}", f"<b>Updated</b> {fetched_at:%d %b, %H:%M} IST",
-         f"<b>{len(result)}</b> of {n_universe} stocks rated", f"<b>{n_liquid}</b> liquid"])
-age_days = (datetime.now(IST).date() - as_of.date()).days
-if mode == "saved" and age_days > 4:
-    st.warning(f"⚠️ This data is from {as_of:%d %b %Y} ({age_days} days ago). The daily job may have "
-               f"stopped - open your GitHub repository's **Actions** tab to check.")
+        [f"<b>As of</b> {as_of:%d %b %Y}", f"<b>Fetched</b> {fetched_at:%d %b, %H:%M} IST",
+         f"<b>{len(result)}</b> of {len(meta)} stocks rated", f"<b>{n_liquid}</b> liquid"])
 ui.kpis([
     ("Top picks", len(top), f"RS ≥ {pref_rs} + trend + RS line", "#10b981"),
     ("Trend Template", len(tt), "all 8 conditions", "#6366f1"),
@@ -322,8 +272,6 @@ with tab_all:
 
 with st.expander("Notes & limitations"):
     st.markdown(
-        f"- **Data:** calculated once every weekday evening (about 5 pm IST, after the market closes) by a free "
-        f"GitHub job and saved to the repository, so this page opens in seconds and never calls Yahoo itself.\n"
         f"- **Universe:** the Nifty Total Market list from NSE (Nifty 500 + Nifty Microcap 250, about 750 stocks). "
         f"Placeholder `DUMMY…` rows are ignored; a few REIT units are included as NSE lists them.\n"
         f"- **RS Rating** ranks every rated stock in this universe (1-99). Stocks with less than 12 months of "
