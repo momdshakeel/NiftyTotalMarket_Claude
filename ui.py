@@ -224,7 +224,7 @@ __IMPORT__
 html.dark{--g:#34d399;--a:#fbbf24;--r:#f87171;--b:#60a5fa}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13.5px/1.35 var(--ff)}
-.wrap{height:100vh;overflow:auto;border:1px solid var(--line);border-radius:14px}
+.wrap{height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:14px}
 table{border-collapse:separate;border-spacing:0;width:100%;min-width:max-content}
 th{position:sticky;top:0;z-index:3;padding:0 12px;height:42px;text-align:right;white-space:nowrap;cursor:pointer;
 user-select:none;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;font-weight:600;
@@ -273,9 +273,16 @@ box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
 .bar b{min-width:24px;text-align:right}
 .txt{color:color-mix(in srgb,var(--fg) 85%,var(--bg))}
 .empty{text-align:center;padding:36px 12px;opacity:.6}
+.searchbar{display:flex;align-items:center;gap:10px;margin:0 0 8px}
+.searchbar input{flex:1;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:9px;
+background:var(--bg);color:var(--fg);font:inherit;outline:none}
+.searchbar input:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent)}
+.count{font-size:.82rem;opacity:.65;white-space:nowrap}
 @media (max-width:760px){.p3{display:none}}
 @media (max-width:520px){.p2{display:none}td,th{padding:0 9px}}
 </style></head><body>
+<div class="searchbar" id="searchbar" style="display:none"><input id="search" type="search" autocomplete="off">
+<span class="count" id="count"></span></div>
 <div class="wrap"><table><thead id="h"></thead><tbody id="b"></tbody></table></div>
 <script>
 const P=__PAYLOAD__;
@@ -284,6 +291,7 @@ const fx=(v,d)=>v==null?'<span class="faint">–</span>':Number(v).toFixed(d);
 const sg=(v,d,suf)=>v==null?'<span class="faint">–</span>':'<span class="'+(v>0?'up':v<0?'dn':'faint')+'">'+(v>0?'+':'')+Number(v).toFixed(d)+suf+'</span>';
 let sk=P.sort[0],sd=P.sort[1];
 const pc=c=>(c.pri==2?'p2':c.pri==3?'p3':'')+(c.left?' l':'');
+let query='';
 function cell(c,r){
   const v=r[c.k],k='<td class="'+pc(c)+'">';
   switch(c.type){
@@ -314,17 +322,21 @@ function cell(c,r){
   return k+esc(v)+'</td>';
 }
 function draw(){
-  const rows=P.rows.slice();
+  const rows=P.rows.filter((r,i)=>!query||P.searchRows[i].some(v=>String(v??'').toLocaleLowerCase().includes(query)));
   rows.sort((a,b)=>{let x=a[sk],y=b[sk];
     if(x==null&&y==null)return 0;if(x==null)return 1;if(y==null)return -1;
     if(typeof x==='string')return sd*x.localeCompare(y);
     return sd*(Number(x)-Number(y));});
   document.getElementById('h').innerHTML='<tr>'+P.cols.map(c=>'<th class="'+pc(c)+'" data-k="'+c.k+'">'+esc(c.t)+'<span class="ar">'+(c.k===sk?(sd>0?'▲':'▼'):'')+'</span></th>').join('')+'</tr>';
   document.getElementById('b').innerHTML=rows.length?rows.map(r=>'<tr>'+P.cols.map(c=>cell(c,r)).join('')+'</tr>').join('')
-    :'<tr><td class="empty" colspan="'+P.cols.length+'" style="text-align:center;position:static">'+esc(P.empty)+'</td></tr>';
+    :'<tr><td class="empty" colspan="'+P.cols.length+'" style="text-align:center;position:static">'+esc(query?'No rows match your search.':P.empty)+'</td></tr>';
+  if(P.searchLabel){document.getElementById('searchbar').style.display='flex';
+    document.getElementById('search').placeholder=P.searchLabel;
+    document.getElementById('count').textContent=query?rows.length+' of '+P.rows.length+' rows':P.rows.length+' rows';}
   document.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;
     if(k===sk)sd=-sd;else{sk=k;sd=P.cols.find(c=>c.k===k).left?1:-1;}draw();});
 }
+if(P.searchLabel)document.getElementById('search').addEventListener('input',e=>{query=e.target.value.trim().toLocaleLowerCase();draw();});
 // follow the Streamlit theme (light / dark / custom) live
 function sync(){
   let bg,fg;
@@ -338,16 +350,21 @@ sync();setInterval(sync,1000);draw();
 
 
 def table(df, keys, sort, font="Inter", density="Comfortable",
-          empty="No stocks match the current filters.", titles=None):
+          empty="No stocks match the current filters.", titles=None, search_keys=None,
+          search_label="Search stock / symbol or company name"):
     """Render a sortable, theme-aware table. `sort` = (column key, -1 desc | 1 asc)."""
     cols = [dict(SPEC[k], k=k) for k in keys if k in df.columns and k in SPEC]
     for c in cols:
         if titles and c["k"] in titles:
             c["t"] = titles[c["k"]]
     data = json.loads(df[[c["k"] for c in cols]].to_json(orient="records")) if len(df) else []
+    search_rows = (df[search_keys].fillna("").astype(str).values.tolist()
+                   if search_keys and len(df) else [])
     rowh = 31 if density == "Compact" else 41
-    height = (120 if not data else min(len(data) * rowh + 46, 640)) + 4
-    payload = json.dumps({"cols": cols, "rows": data, "sort": list(sort), "empty": empty}).replace("</", "<\\/")
+    height = (120 if not data else min(len(data) * rowh + 46, 640)) + 48
+    payload = json.dumps({"cols": cols, "rows": data, "searchRows": search_rows,
+                          "searchLabel": search_label if search_keys else "",
+                          "sort": list(sort), "empty": empty}).replace("</", "<\\/")
     html = (_TABLE_HTML
             .replace("__IMPORT__", f"@import url('{font_url(font)}');" if font_url(font) else "")
             .replace("__FAMILY__", font_family(font))
