@@ -9,13 +9,14 @@ previous good data stays in place.
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
 import nse500_rs_rating as m
 
 OUT = "data"
+IST = timezone(timedelta(hours=5, minutes=30))
 SHARES_REFRESH_DAYS = 7          # share counts rarely change - re-download weekly
 MIN_PRICE_COVERAGE = 0.70        # fail if Yahoo returned prices for fewer than 70% of the universe
 MAX_DATA_AGE_DAYS = 5            # fail if the newest price is older than this (weekend + holidays ok)
@@ -24,7 +25,7 @@ MAX_DATA_AGE_DAYS = 5            # fail if the newest price is older than this (
 def get_shares(tickers):
     """Shares outstanding, cached in data/shares.csv: only missing / stale / unknown rows are re-fetched."""
     path = os.path.join(OUT, "shares.csv")
-    today = pd.Timestamp(datetime.now(m.IST).date())
+    today = pd.Timestamp(datetime.now(IST).date())
     cols = ["Ticker", "Shares", "Updated"]
     old = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame(columns=cols)
     old["Updated"] = pd.to_datetime(old["Updated"], errors="coerce")
@@ -60,7 +61,7 @@ def main():
         sys.exit("ERROR: Yahoo Finance returned too little data - keeping the previous results.")
     prices = md["Close"]
 
-    age = (datetime.now(m.IST).date() - prices.index[-1].date()).days
+    age = (datetime.now(IST).date() - prices.index[-1].date()).days
     if age > MAX_DATA_AGE_DAYS:
         sys.exit(f"ERROR: newest price is {age} days old - keeping the previous results.")
 
