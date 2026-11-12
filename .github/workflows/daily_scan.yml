@@ -18,6 +18,8 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -36,5 +38,10 @@ jobs:
           git config user.name "scanner-bot"
           git config user.email "scanner-bot@users.noreply.github.com"
           git add data/
-          git diff --cached --quiet || git commit -m "Update scan data"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to save"
+          else
+            git commit -m "Update scan data"
+            git pull --rebase
+            git push
+          fi
