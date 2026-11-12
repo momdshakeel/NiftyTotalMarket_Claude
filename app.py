@@ -227,6 +227,15 @@ def stock_cols(keys):
 
 
 def show(frame, name, text, keys=None, sort=("RS_Rating", -1), titles=None):
+    search = st.text_input("Search stock / symbol", key=f"table_search_{name}",
+                           placeholder="Enter symbol or company name")
+    if search.strip():
+        needle = search.strip()
+        matches = frame["Symbol"].astype(str).str.contains(needle, case=False, regex=False, na=False)
+        if "Company Name" in frame.columns:
+            matches |= frame["Company Name"].astype(str).str.contains(
+                needle, case=False, regex=False, na=False)
+        frame = frame[matches]
     ui.note(f"<b>{len(frame)}</b> stocks · {text}")
     ui.table(frame, stock_cols(keys or ui.COLS_DEFAULT), sort, font, density, titles=titles)
     if not frame.empty:
@@ -268,7 +277,16 @@ def show_breadth_and_sectors():
     if ind.empty:
         st.info("No groups meet the minimum size.")
         return
-    ui.note(f"Ranked by a blend of <b>median RS Rating (50%)</b>, <b>share of stocks with RS ≥ 80 (25%)</b> "
+    group_search = st.text_input("Search group / industry", key="table_search_industry",
+                                 placeholder="Enter a group name")
+    if group_search.strip():
+        ind = ind[ind["Group"].astype(str).str.contains(
+            group_search.strip(), case=False, regex=False, na=False)]
+    if ind.empty:
+        st.info("No groups match your search.")
+        return
+    ui.note(f"<b>{len(ind)}</b> groups · Ranked by a blend of <b>median RS Rating (50%)</b>, "
+            f"<b>share of stocks with RS ≥ 80 (25%)</b> "
             f"and <b>share passing the Trend Template (25%)</b>.")
     ui.table(ind, ui.COLS_INDUSTRY, ("Rank", 1), font, density, titles={"Group": level})
     st.download_button("⬇️ Download CSV", ind.to_csv(index=False).encode("utf-8"),
