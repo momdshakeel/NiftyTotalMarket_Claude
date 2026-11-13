@@ -44,16 +44,17 @@ ui.inject_css(font)
 # ---------------- Data loading (cached, shared by all visitors) ----------------
 DATA_DIR = os.path.join(HERE, "data")
 LATEST = os.path.join(DATA_DIR, "latest.csv")
+META = os.path.join(DATA_DIR, "meta.json")
 # Optional: if the app ever shows old data, put your repository's raw data folder here, e.g.
 #   DATA_URL = "https://raw.githubusercontent.com/YOUR-NAME/YOUR-REPO/main/data"
 DATA_URL = ""
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def load_saved(key):
-    """Results saved by the daily job. `key` (URL or file timestamp) only makes the cache
-    refresh when new data arrives."""
-    return m.load_saved_results(key if isinstance(key, str) else DATA_DIR)
+def load_saved(key, base=None):
+    """Load the saved scan. `key` is a freshness marker for Streamlit's cache;
+    `base` is the folder or URL containing latest.csv and meta.json."""
+    return m.load_saved_results(base if base is not None else key)
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
@@ -81,12 +82,14 @@ def compute(meta: pd.DataFrame, shares: pd.Series):
 saved = None
 if DATA_URL:
     try:
-        saved = load_saved(DATA_URL)
+        saved = load_saved(DATA_URL, DATA_URL)
     except Exception:
         saved = None
 if saved is None and os.path.exists(LATEST):
     try:
-        saved = load_saved(os.path.getmtime(LATEST))
+        # The scan can refresh meta.json without changing latest.csv (for example, if
+        # the market data is identical). Track both files so the Updated time cannot go stale.
+        saved = load_saved((os.path.getmtime(LATEST), os.path.getmtime(META)), DATA_DIR)
     except Exception as e:
         st.warning(f"Could not read the saved data ({e}). Calculating live instead.")
 
