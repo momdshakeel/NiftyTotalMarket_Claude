@@ -45,16 +45,18 @@ ui.inject_css(font)
 DATA_DIR = os.path.join(HERE, "data")
 LATEST = os.path.join(DATA_DIR, "latest.csv")
 META = os.path.join(DATA_DIR, "meta.json")
-# Optional: if the app ever shows old data, put your repository's raw data folder here, e.g.
-#   DATA_URL = "https://raw.githubusercontent.com/YOUR-NAME/YOUR-REPO/main/data"
-DATA_URL = ""
+# Read the latest committed scan directly so the refresh button can fetch new data
+# without waiting for the app's deployed checkout to restart.
+DATA_URL = "https://raw.githubusercontent.com/momdshakeel/NiftyTotalMarket_Claude/main/data"
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_saved(key, base=None):
     """Load the saved scan. `key` is a freshness marker for Streamlit's cache;
     `base` is the folder or URL containing latest.csv and meta.json."""
-    return m.load_saved_results(base if base is not None else key)
+    source = base if base is not None else key
+    cache_bust = key if isinstance(source, str) and source.startswith("http") else None
+    return m.load_saved_results(source, cache_bust=cache_bust)
 
 
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
@@ -80,10 +82,13 @@ def compute(meta: pd.DataFrame, shares: pd.Series):
 
 
 saved = None
+remote_data_error = None
 if DATA_URL:
     try:
-        saved = load_saved(DATA_URL, DATA_URL)
-    except Exception:
+        refresh_token = st.session_state.get("data_refresh_token", "initial")
+        saved = load_saved(f"{DATA_URL}:{refresh_token}", DATA_URL)
+    except Exception as e:
+        remote_data_error = e
         saved = None
 if saved is None and os.path.exists(LATEST):
     try:
@@ -131,6 +136,10 @@ else:
             st.rerun()
         st.stop()
 
+if remote_data_error is not None:
+    st.warning(f"Could not fetch the latest scan files from GitHub ({remote_data_error}). "
+               "Showing the deployed local copy if available.")
+
 has_cls = bool(result["Basic Industry"].notna().any()) if "Basic Industry" in result.columns else False
 n_liquid = int(result["Liquid"].sum())
 market_context = m.market_breadth(result)
@@ -169,11 +178,15 @@ with st.sidebar:
                 else f"Live calculation - refreshes every {CACHE_HOURS} hours"))
     if st.button("🔄 Reload latest data", use_container_width=True):
         load_saved.clear()
+        st.session_state["data_refresh_token"] = datetime.now(IST).isoformat(timespec="seconds")
+        st.session_state["latest_data_refresh_notice"] = True
         if mode == "live":
             compute.clear()
             fetch_universe.clear()
             st.session_state.pop("shares_failed", None)
         st.rerun()
+    if st.session_state.pop("latest_data_refresh_notice", False):
+        st.success("Checked GitHub for the latest scan data.")
 
 # ---------------- Apply filters ----------------
 df = result
