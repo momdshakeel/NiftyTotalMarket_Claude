@@ -98,6 +98,12 @@ BREAKOUT_LOOKBACK = 60           # must close above the prior 60-session high
 BREAKOUT_VOL_X = 1.5             # volume >= 1.5x the prior 50-day average
 BREAKOUT_RECENT_DAYS = 3         # look back over the last 3 sessions
 
+# ---- Momentum context (heuristic labels; use as screening context, not forecasts) ----
+VOLUME_PRESSURE_DAYS = 20
+UP_DOWN_VOLUME_DOMINANT = 1.25
+DOWN_UP_VOLUME_DOMINANT = 0.80
+EXTENSION_WARN_PCT = 10.0        # flag price >=10% above its 50-day average
+
 
 # ---------------- 1. Universe + NSE classification ----------------
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -382,8 +388,19 @@ def technicals(prices, bench, rs_now):
     rsl_uptrend = rsl_last > rsl.rolling(50).mean().iloc[-1]
     blue_dot = rsl_new_high & (last < hi52 * (1 - BLUE_DOT_PRICE_GAP))
 
+    # Relative performance of each stock versus the benchmark over trailing windows.
+    if len(rsl) >= 127:
+        rs_3m = (rsl.iloc[-1] / rsl.iloc[-64] - 1) * 100
+        rs_6m = (rsl.iloc[-1] / rsl.iloc[-127] - 1) * 100
+        rs_prev_3m = (rsl.iloc[-64] / rsl.iloc[-127] - 1) * 100
+        rs_improving = rs_3m > rs_prev_3m
+    else:
+        rs_3m = rs_6m = pd.Series(np.nan, index=idx)
+        rs_improving = pd.Series(False, index=idx)
+
     out = pd.DataFrame({
         "Close": last.round(2),
+        "Pct_Above_50SMA": ((last / s50 - 1) * 100).round(1),
         "Pct_From_52W_High": ((last / hi52 - 1) * 100).round(1),
         "Pct_Above_52W_Low": ((last / lo52 - 1) * 100).round(1),
         "SMA50": s50.round(2), "SMA150": s150.round(2), "SMA200": s200.round(2),
@@ -393,6 +410,9 @@ def technicals(prices, bench, rs_now):
         "RS_Line_Near_High": rsl_near_high,
         "RS_Line_Uptrend": rsl_uptrend,
         "RS_Blue_Dot": blue_dot,
+        "RS_Excess_3M_%": rs_3m.round(1),
+        "RS_Excess_6M_%": rs_6m.round(1),
+        "RS_Improving": rs_improving,
     })
     out["TT_Score"] = conds.sum(axis=1).astype(int)
     out["TT_Pass"] = conds.all(axis=1)
@@ -542,6 +562,13 @@ def pattern_table(prices, ohlcv, idx):
     # --- volume ---
     dry = vol.iloc[-10:].mean() / vol.iloc[-50:].mean() <= VOL_DRYUP_RATIO
     vol_x_today = (vol.iloc[-1] / vol.shift(1).rolling(50).mean().iloc[-1]).round(2)
+    up_volume = vol.where(p.diff() > 0, 0).iloc[-VOLUME_PRESSURE_DAYS:].sum()
+    down_volume = vol.where(p.diff() < 0, 0).iloc[-VOLUME_PRESSURE_DAYS:].sum()
+    up_down_ratio = (up_volume / down_volume.replace(0, np.nan)).round(2)
+    volume_pressure = pd.Series("Balanced", index=idx, dtype=object)
+    volume_pressure[up_down_ratio >= UP_DOWN_VOLUME_DOMINANT] = "Up-volume dominant"
+    volume_pressure[up_down_ratio <= DOWN_UP_VOLUME_DOMINANT] = "Down-volume dominant"
+    volume_pressure[(down_volume == 0) & (up_volume > 0)] = "Up-volume dominant"
     vcp_setup = vcp & dry & (pct_to_pivot >= 0) & (pct_to_pivot <= VCP_NEAR_PIVOT)
 
     # --- volume breakout in the last few sessions ---
@@ -571,6 +598,8 @@ def pattern_table(prices, ohlcv, idx):
         "Pivot": pivot.round(2), "Pct_To_Pivot": pct_to_pivot,
         "Vol_Breakout": days_ago.notna(), "Breakout_Days_Ago": days_ago,
         "Breakout_Vol_x": brk_vol.round(2), "Vol_x_50d": vol_x_today,
+        "Up_Down_Vol_Ratio_20D": up_down_ratio,
+        "Volume_Pressure_20D": volume_pressure,
     })
 
 
@@ -633,12 +662,44 @@ def build_table(prices, bench, meta, ohlcv=None, shares=None):
         out = out.join(liquidity_table(prices, ohlcv["Volume"], rs_now.index))
     if shares is not None:
         out["Market_Cap_Cr"] = market_cap_cr(prices, shares, out.index)
+
+    pct_above_50 = out.get("Pct_Above_50SMA", pd.Series(np.nan, index=out.index))
+    out["Extension_State"] = np.select(
+        [pct_above_50 >= EXTENSION_WARN_PCT, pct_above_50 < 0],
+        ["Extended", "Below 50-day"], default="Not extended")
+    stage2 = out.get("Stage", pd.Series("", index=out.index)).eq(STAGE_NAMES[2])
+    stage4 = out.get("Stage", pd.Series("", index=out.index)).eq(STAGE_NAMES[4])
+    tt_score = out.get("TT_Score", pd.Series(0, index=out.index))
+    rs_rating_value = out["RS_Rating"]
+    rs_3m_value = out.get("RS_Excess_3M_%", pd.Series(np.nan, index=out.index))
+    rs_improving_value = out.get("RS_Improving", pd.Series(False, index=out.index)).fillna(False)
+    pressure = out.get("Volume_Pressure_20D", pd.Series("Balanced", index=out.index))
+    strong = (stage2 & (tt_score >= 6) & (rs_rating_value >= 80)
+              & (rs_3m_value > 0) & rs_improving_value)
+    developing = (stage2 & (tt_score >= 5) & (rs_rating_value >= 70) & (rs_3m_value > 0))
+    weakening = (stage4 | ((tt_score <= 3) & (rs_3m_value < 0))
+                 | ((rs_3m_value < 0) & pressure.eq("Down-volume dominant")))
+    out["Trend_State"] = np.select(
+        [strong, weakening, developing], ["Strong trend", "Weakening", "Developing"], default="Mixed")
     out.index.name = "Ticker"
     keep = [c for c in ["Ticker", "Company Name", "Sector", "Symbol", "Series",
                         "Macro Sector", "Industry", "Basic Industry"] if c in meta.columns]
     out = out.reset_index().merge(meta[keep], on="Ticker", how="left")
 
-    front = ["Symbol", "Company Name", "Sector", "RS_Rating", "RS_Change",
+    if "Sector" in out.columns:
+        sector_strength = industry_strength(out, min_stocks=3, level="Sector")
+        if not sector_strength.empty:
+            sector_lookup = sector_strength[["Group", "Rank", "Industry_Score"]].rename(columns={
+                "Group": "Sector", "Rank": "Sector_Rank", "Industry_Score": "Sector_Strength"
+            })
+            out = out.merge(sector_lookup, on="Sector", how="left")
+        else:
+            out["Sector_Rank"] = np.nan
+            out["Sector_Strength"] = np.nan
+
+    front = ["Symbol", "Company Name", "Sector", "Sector_Rank", "Sector_Strength", "RS_Rating", "RS_Change",
+             "Trend_State", "RS_Excess_3M_%", "RS_Excess_6M_%", "RS_Improving",
+             "Volume_Pressure_20D", "Up_Down_Vol_Ratio_20D", "Pct_Above_50SMA", "Extension_State",
              "Weighted_Return_%", "Stage", "TT_Score", "TT_Pass", "Stage1_Base", "VCP",
              "VCP_Setup", "Vol_Breakout", "Liquid", "Avg_Value_Cr", "Market_Cap_Cr", "RS_Line_New_High", "RS_Line_Near_High",
              "RS_Blue_Dot", "RS_Line_Uptrend", "RSI14", "Close", "Pct_From_52W_High",
@@ -712,13 +773,24 @@ def market_breadth(result, liquid_only=True):
         return round(float(mask.mean() * 100), 1) if n else 0.0
 
     chg = r["Chg_1D_%"]
+    above_50 = pct(r["Close"] > r["SMA50"])
+    above_200 = pct(r["Close"] > r["SMA200"])
+    if n == 0:
+        market_state = "No data"
+    elif above_50 >= 60 and above_200 >= 60:
+        market_state = "Supportive"
+    elif above_50 < 40 or above_200 < 40:
+        market_state = "Weak"
+    else:
+        market_state = "Mixed"
     return {
         "stocks": n,
         "advancers": int((chg > 0).sum()), "decliners": int((chg < 0).sum()),
         "unchanged": int((chg == 0).sum()),
-        "pct_above_50": pct(r["Close"] > r["SMA50"]),
+        "pct_above_50": above_50,
         "pct_above_150": pct(r["Close"] > r["SMA150"]),
-        "pct_above_200": pct(r["Close"] > r["SMA200"]),
+        "pct_above_200": above_200,
+        "market_state": market_state,
         "pct_stage2": pct(r["Stage"].eq(STAGE_NAMES[2])) if "Stage" in r.columns else 0.0,
         "pct_tt": pct(r["TT_Pass"]),
         "pct_rs80": pct(r["RS_Rating"] >= 80),
