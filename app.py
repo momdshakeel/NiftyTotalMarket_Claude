@@ -29,7 +29,7 @@ CACHE_HOURS = 6
 IST = timezone(timedelta(hours=5, minutes=30))
 LIQ_TEXT = f"avg {m.LIQUIDITY_DAYS}-day traded value ≥ ₹{m.MIN_TRADED_VALUE_CR:.0f} crore"
 
-st.set_page_config(page_title="Total Market RS Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="MarketPulse 750", page_icon="📈", layout="wide")
 
 # ---------------- Appearance (first, so the CSS can use the chosen font) ----------------
 with st.sidebar:
@@ -199,12 +199,13 @@ brk = df[df.Vol_Breakout].sort_values(["Breakout_Days_Ago", "Breakout_Vol_x"], a
 s1 = df[df.Stage1_Base].sort_values("Base_Days", ascending=False)
 
 # ---------------- Header + KPI cards ----------------
-ui.hero("RS Rating Scanner",
+ui.hero("MarketPulse 750",
         "Relative-strength ranking, Minervini Trend Template, VCP setups, volume breakouts, Weinstein "
         "stages, market breadth and sector strength across the Nifty Total Market (Nifty 500 + Microcap 250).",
         [f"<b>As of</b> {as_of:%d %b %Y}", f"<b>Updated</b> {fetched_at:%d %b, %H:%M} IST",
          f"<b>{len(result)}</b> of {n_universe} stocks rated", f"<b>{n_liquid}</b> liquid",
-         f"<b>Market breadth</b> {market_context['market_state']}"])
+         f"<b>Market breadth</b> {market_context['market_state']}"],
+        eyebrow="Nifty Total Market · Momentum & relative strength")
 age_days = (datetime.now(IST).date() - as_of.date()).days
 if mode == "saved" and age_days > 4:
     st.warning(f"⚠️ This data is from {as_of:%d %b %Y} ({age_days} days ago). The daily job may have "
