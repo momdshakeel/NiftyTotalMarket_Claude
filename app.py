@@ -130,6 +130,7 @@ else:
 
 has_cls = bool(result["Basic Industry"].notna().any()) if "Basic Industry" in result.columns else False
 n_liquid = int(result["Liquid"].sum())
+market_context = m.market_breadth(result)
 
 # ---------------- Sidebar filters ----------------
 with st.sidebar:
@@ -202,7 +203,8 @@ ui.hero("RS Rating Scanner",
         "Relative-strength ranking, Minervini Trend Template, VCP setups, volume breakouts, Weinstein "
         "stages, market breadth and sector strength across the Nifty Total Market (Nifty 500 + Microcap 250).",
         [f"<b>As of</b> {as_of:%d %b %Y}", f"<b>Updated</b> {fetched_at:%d %b, %H:%M} IST",
-         f"<b>{len(result)}</b> of {n_universe} stocks rated", f"<b>{n_liquid}</b> liquid"])
+         f"<b>{len(result)}</b> of {n_universe} stocks rated", f"<b>{n_liquid}</b> liquid",
+         f"<b>Market breadth</b> {market_context['market_state']}"])
 age_days = (datetime.now(IST).date() - as_of.date()).days
 if mode == "saved" and age_days > 4:
     st.warning(f"⚠️ This data is from {as_of:%d %b %Y} ({age_days} days ago). The daily job may have "
@@ -229,7 +231,7 @@ def stock_cols(keys):
 def show(frame, name, text, keys=None, sort=("RS_Rating", -1), titles=None):
     ui.note(f"<b>{len(frame)}</b> stocks · {text}")
     ui.table(frame, stock_cols(keys or ui.COLS_DEFAULT), sort, font, density, titles=titles,
-             search_keys=["Symbol", "Company Name"])
+             search_keys=["Symbol", "Company Name"], market_context=market_context)
     if not frame.empty:
         st.download_button("⬇️ Download CSV", frame.to_csv(index=False).encode("utf-8"),
                            file_name=f"totalmarket_{name}_{as_of.date()}.csv", mime="text/csv",
@@ -331,6 +333,16 @@ with st.expander("Notes & limitations"):
         f"Placeholder `DUMMY…` rows are ignored; a few REIT units are included as NSE lists them.\n"
         f"- **RS Rating** ranks every rated stock in this universe (1-99). Stocks with less than 12 months of "
         f"price history, or with no Yahoo Finance data, are not rated.\n"
+        f"- **Momentum context:** 3- and 6-month relative returns compare each stock with the Nifty 500. "
+        f"RS improvement compares the latest 3-month relative return with the prior 3-month period. "
+        f"The 20-day up/down volume ratio compares volume on rising and falling sessions; ≥1.25 is "
+        f"up-volume dominant and ≤0.80 is down-volume dominant. This is not delivery or participant-flow data.\n"
+        f"- **Trend status and extension labels are screening heuristics, not forecasts.** Strong trend requires "
+        f"Stage 2, TT score ≥6/8, RS ≥80, and positive, improving 3-month relative strength. Developing uses "
+        f"Stage 2, TT ≥5/8, RS ≥70, and positive 3-month relative strength. Weakening marks Stage 4, or "
+        f"negative 3-month relative strength combined with TT ≤3 or down-volume dominance. Extended means price is at least "
+        f"{m.EXTENSION_WARN_PCT:.0f}% above its 50-day SMA. Market breadth is Supportive at ≥60% above both "
+        f"the 50- and 200-day SMAs, Weak when fewer than 40% are above either, and Mixed otherwise.\n"
         f"- **Liquid** = {LIQ_TEXT} (close × volume). The *Liquid stocks only* switch filters the stock lists; "
         f"breadth, sector and industry figures always use liquid stocks.\n"
         f"- **Sectors** are NSE's 22 sectors, taken from NSE's index list. **Industry** and **Basic industry** come "
