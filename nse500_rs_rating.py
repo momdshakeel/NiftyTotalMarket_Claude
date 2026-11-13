@@ -818,14 +818,18 @@ def save_results(result, as_of, out_dir="data", extra=None):
     return info
 
 
-def load_saved_results(base):
+def load_saved_results(base, cache_bust=None):
     """Read what save_results wrote. `base` = a folder path or a URL prefix
-    (e.g. https://raw.githubusercontent.com/you/repo/main/data). Returns (table, info dict)."""
+    (e.g. https://raw.githubusercontent.com/you/repo/main/data). Returns (table, info dict).
+    `cache_bust` is an optional query value for bypassing raw-file CDN caches on manual refresh."""
     base = str(base)
     if base.startswith("http"):
         base = base.rstrip("/")
-        df = pd.read_csv(base + "/latest.csv")
-        r = requests.get(base + "/meta.json", headers=_HEADERS, timeout=30)
+        params = {"_": str(cache_bust)} if cache_bust is not None else None
+        data = requests.get(base + "/latest.csv", params=params, headers=_HEADERS, timeout=30)
+        data.raise_for_status()
+        df = pd.read_csv(io.BytesIO(data.content))
+        r = requests.get(base + "/meta.json", params=params, headers=_HEADERS, timeout=30)
         r.raise_for_status()
         info = r.json()
     else:
