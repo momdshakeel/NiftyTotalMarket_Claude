@@ -241,6 +241,27 @@ th:first-child,td:first-child{position:sticky;left:0;z-index:2;background:var(--
 th:first-child{z-index:4;background:color-mix(in srgb,var(--fg) 5%,var(--bg))}
 a.sym{color:var(--accent);font-weight:700;text-decoration:none}
 a.sym:hover{text-decoration:underline}
+.symcell{display:inline-flex;align-items:center;gap:6px}
+.info-btn{width:18px;height:18px;padding:0;border:1px solid var(--line);border-radius:50%;
+background:var(--soft);color:var(--accent);font:700 11px/16px var(--ff);cursor:pointer}
+.info-btn:hover{background:var(--accent);color:#fff}
+.overlay{display:none;position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:14px}
+.dialog{position:relative;width:min(760px,100%);max-height:94vh;overflow:auto;padding:20px;
+background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:16px;box-shadow:0 16px 48px rgba(0,0,0,.28)}
+.close-btn{position:absolute;right:14px;top:10px;border:0;background:transparent;color:var(--fg);font-size:24px;cursor:pointer}
+.dhead{display:flex;align-items:center;gap:12px;padding-right:28px;margin-bottom:16px}
+.dhead h2{margin:0;font-size:1.35rem}.dsub{font-size:.84rem;opacity:.68}
+.dprice{margin-left:auto;text-align:right;font-size:1.25rem;font-weight:700;white-space:nowrap}
+.positive{color:var(--g)}.negative{color:var(--r)}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin:12px 0 18px}
+.metric,.section{border:1px solid var(--line);border-radius:11px;padding:10px}
+.metric .label{font-size:.7rem;opacity:.65;text-transform:uppercase;letter-spacing:.04em}
+.metric .value{font-size:1.08rem;font-weight:700;margin-top:5px}
+.section{margin-top:12px}.section h3{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;margin:0 0 10px;opacity:.72}
+.checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;font-size:.84rem}
+.check{display:flex;gap:7px;align-items:flex-start}.check b{font-size:1rem;line-height:1}
+.tags{display:flex;gap:7px;flex-wrap:wrap}.tag{border-radius:7px;padding:4px 8px;background:var(--soft);font-size:.78rem}
+@media(max-width:560px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.checks{grid-template-columns:1fr}.dialog{padding:16px}.dhead{align-items:flex-start;flex-wrap:wrap}.dprice{margin-left:0}}
 .ell{display:inline-block;max-width:210px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;
 color:color-mix(in srgb,var(--fg) 70%,var(--bg))}
 .badge{display:inline-block;min-width:38px;text-align:center;padding:2px 9px;border-radius:999px;font-weight:700}
@@ -284,6 +305,8 @@ background:var(--bg);color:var(--fg);font:inherit;outline:none}
 <div class="searchbar" id="searchbar" style="display:none"><input id="search" type="search" autocomplete="off">
 <span class="count" id="count"></span></div>
 <div class="wrap"><table><thead id="h"></thead><tbody id="b"></tbody></table></div>
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" onclick="if(event.target===this)closeDetails()">
+<div class="dialog"><button class="close-btn" type="button" aria-label="Close" onclick="closeDetails()">×</button><div id="detail"></div></div></div>
 <script>
 const P=__PAYLOAD__;
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -292,10 +315,42 @@ const sg=(v,d,suf)=>v==null?'<span class="faint">–</span>':'<span class="'+(v>
 let sk=P.sort[0],sd=P.sort[1];
 const pc=c=>(c.pri==2?'p2':c.pri==3?'p3':'')+(c.left?' l':'');
 let query='';
+const DETAIL_TT=[
+  ['TT1_>150&200SMA','Price > 150 & 200 SMA'],['TT2_150>200SMA','150 SMA > 200 SMA'],
+  ['TT3_200SMA_up','200 SMA rising'],['TT4_50>150&200SMA','50 SMA > 150 & 200 SMA'],
+  ['TT5_>50SMA','Price > 50 SMA'],['TT6_30%>52wLow','At least 30% above 52-week low'],
+  ['TT7_within25%_52wHigh','Within 25% of 52-week high'],['TT8_RS>=70','RS rating ≥ 70']
+];
+const val=(d,k)=>d[k]==null?'–':d[k];
+const num=(d,k,digits=1,suffix='')=>d[k]==null?'–':Number(d[k]).toFixed(digits)+suffix;
+function closeDetails(){document.getElementById('overlay').style.display='none';}
+function openDetails(symbol){
+  const d=P.details.find(x=>String(x.Symbol)===String(symbol));if(!d)return;
+  const change=Number(d['Chg_1D_%']||0),changeClass=change>=0?'positive':'negative';
+  const conditionRows=DETAIL_TT.map(([k,label])=>'<div class="check"><b class="'+(d[k]?'positive':'negative')+'">'+(d[k]?'✓':'×')+'</b><span>'+esc(label)+'</span></div>').join('');
+  const setups=[['VCP_Setup','VCP setup'],['Vol_Breakout','Volume breakout'],['Stage1_Base','Stage 1 base'],['RS_Blue_Dot','RS blue dot']]
+    .filter(([k])=>d[k]).map(([,label])=>'<span class="tag">'+label+'</span>').join('');
+  document.getElementById('detail').innerHTML=
+    '<div class="dhead"><div><h2>'+esc(val(d,'Symbol'))+'</h2><div class="dsub">'+esc(val(d,'Company Name'))+
+    (d.Sector?' · '+esc(d.Sector):'')+'</div></div><div class="dprice">₹'+esc(num(d,'Close',2))+
+    '<div class="'+changeClass+'" style="font-size:.82rem">'+(change>0?'+':'')+esc(num(d,'Chg_1D_%',2,'%'))+'</div></div></div>'+
+    '<div class="cards">'+[
+      ['RS rating',val(d,'RS_Rating')],['Stage',val(d,'Stage')],['Volume vs 50-day avg',num(d,'Vol_x_50d',1,'×')],
+      ['From 52-week high',num(d,'Pct_From_52W_High',1,'%')],['RS change',num(d,'RS_Change',1)],
+      ['RSI (14)',num(d,'RSI14',1)],['Weighted return',num(d,'Weighted_Return_%',1,'%')],
+      ['Avg traded value',num(d,'Avg_Value_Cr',1,' cr/day')]
+    ].map(([label,value])=>'<div class="metric"><div class="label">'+label+'</div><div class="value">'+esc(value)+'</div></div>').join('')+'</div>'+
+    '<div class="section"><h3>Trend template ('+esc(val(d,'TT_Score'))+'/8)</h3><div class="checks">'+conditionRows+'</div></div>'+
+    '<div class="section"><h3>Setups today</h3><div class="tags">'+(setups||'<span class="dsub">No active setup flags</span>')+'</div></div>'+
+    '<div class="section"><h3>Base details</h3><div class="dsub">'+(d.Base_Forming?'Base forming':'No current base detected')+
+    ' · '+(d.Base_Days==null?'–':esc(d.Base_Days)+' sessions')+
+    (d['Base_Depth_%']==null?'':' · '+esc(num(d,'Base_Depth_%',1,'%'))+' depth')+'</div></div>';
+  document.getElementById('overlay').style.display='flex';
+}
 function cell(c,r){
   const v=r[c.k],k='<td class="'+pc(c)+'">';
   switch(c.type){
-    case 'sym':return k+'<a class="sym" target="_blank" rel="noopener" href="https://www.tradingview.com/chart/?symbol=NSE%3A'+encodeURIComponent(v)+'">'+esc(v)+'</a></td>';
+    case 'sym':return k+'<span class="symcell"><a class="sym" target="_blank" rel="noopener" href="https://www.tradingview.com/chart/?symbol=NSE%3A'+encodeURIComponent(v)+'">'+esc(v)+'</a><button class="info-btn" type="button" title="Stock details" aria-label="Stock details for '+esc(v)+'" data-symbol="'+esc(v)+'">i</button></span></td>';
     case 'grp':return k+'<b>'+esc(v)+'</b></td>';
     case 'cr0':return k+(v==null?'<span class="faint">–</span>':Number(v).toLocaleString('en-IN',{maximumFractionDigits:0}))+'</td>';
     case 'cr':return k+(v==null?'<span class="faint">–</span>':Number(v).toLocaleString('en-IN',{maximumFractionDigits:1}))+'</td>';
@@ -335,6 +390,7 @@ function draw(){
     document.getElementById('count').textContent=query?rows.length+' of '+P.rows.length+' rows':P.rows.length+' rows';}
   document.querySelectorAll('th').forEach(th=>th.onclick=()=>{const k=th.dataset.k;
     if(k===sk)sd=-sd;else{sk=k;sd=P.cols.find(c=>c.k===k).left?1:-1;}draw();});
+  document.querySelectorAll('.info-btn').forEach(btn=>btn.onclick=e=>{e.stopPropagation();openDetails(btn.dataset.symbol);});
 }
 if(P.searchLabel)document.getElementById('search').addEventListener('input',e=>{query=e.target.value.trim().toLocaleLowerCase();draw();});
 // follow the Streamlit theme (light / dark / custom) live
@@ -360,9 +416,18 @@ def table(df, keys, sort, font="Inter", density="Comfortable",
     data = json.loads(df[[c["k"] for c in cols]].to_json(orient="records")) if len(df) else []
     search_rows = (df[search_keys].fillna("").astype(str).values.tolist()
                    if search_keys and len(df) else [])
+    detail_keys = [k for k in ["Symbol", "Company Name", "Sector", "Close", "Chg_1D_%", "RS_Rating",
+                    "RS_Change", "Stage", "TT_Score", "Vol_x_50d", "Pct_From_52W_High", "RSI14",
+                    "Weighted_Return_%", "Avg_Value_Cr", "TT1_>150&200SMA", "TT2_150>200SMA",
+                    "TT3_200SMA_up", "TT4_50>150&200SMA", "TT5_>50SMA", "TT6_30%>52wLow",
+                    "TT7_within25%_52wHigh", "TT8_RS>=70", "VCP_Setup", "Vol_Breakout",
+                    "Stage1_Base", "RS_Blue_Dot", "Base_Forming", "Base_Days", "Base_Depth_%"]
+                    if k in df.columns]
+    detail_rows = json.loads(df[detail_keys].to_json(orient="records")) if len(df) and "Symbol" in detail_keys else []
     rowh = 31 if density == "Compact" else 41
-    height = (120 if not data else min(len(data) * rowh + 46, 640)) + 48
-    payload = json.dumps({"cols": cols, "rows": data, "searchRows": search_rows,
+    height = max((120 if not data else min(len(data) * rowh + 46, 640)) + 48,
+                 640 if detail_rows else 0)
+    payload = json.dumps({"cols": cols, "rows": data, "searchRows": search_rows, "details": detail_rows,
                           "searchLabel": search_label if search_keys else "",
                           "sort": list(sort), "empty": empty}).replace("</", "<\\/")
     html = (_TABLE_HTML
