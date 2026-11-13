@@ -186,7 +186,12 @@ with st.sidebar:
             st.session_state.pop("shares_failed", None)
         st.rerun()
     if st.session_state.pop("latest_data_refresh_notice", False):
-        st.success("Checked GitHub for the latest scan data.")
+        if remote_data_error is None and mode == "saved":
+            st.success("Loaded the latest scan files from GitHub.")
+        elif remote_data_error is not None:
+            st.error("GitHub refresh failed; the app is showing its deployed copy if available.")
+        else:
+            st.info("No saved scan was loaded; the app is calculating data live.")
 
 # ---------------- Apply filters ----------------
 df = result
