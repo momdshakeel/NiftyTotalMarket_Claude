@@ -130,7 +130,7 @@ def inject_css(font: str) -> None:
     st.markdown(css, unsafe_allow_html=True)
 
 
-def hero(title: str, subtitle: str, chips: list, eyebrow: str = "Nifty Total Market · Relative strength") -> None:
+def hero(title: str, subtitle: str, chips: list, eyebrow: str = "MarketPulse 750 · Nifty Total Market") -> None:
     chip_html = "".join(f'<span class="chip">{c}</span>' for c in chips)
     st.markdown(
         f'<div class="hero"><div><div class="eyebrow">{eyebrow}</div>'
