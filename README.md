@@ -1,7 +1,7 @@
-# Nifty Total Market RS Scanner
+# MarketPulse 750
 
 A free Streamlit web app that scans the **Nifty Total Market** (Nifty 500 + Nifty Microcap 250, about 750 NSE stocks)
-for relative strength and classic trend / pattern setups. Educational tool - not investment advice.
+for relative strength, momentum, and classic trend / pattern setups. Educational tool - not investment advice.
 
 ## What the app shows
 
