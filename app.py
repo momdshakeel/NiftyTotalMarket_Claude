@@ -285,9 +285,9 @@ def show_breadth_and_sectors():
     show(members, "group_stocks", f"Liquid stocks in <b>{pick}</b>, sorted by RS Rating.")
 
 
-(tab_top, tab_tt, tab_vcp, tab_brk, tab_s1, tab_blue, tab_mkt, tab_all) = st.tabs([
+(tab_top, tab_tt, tab_vcp, tab_brk, tab_s1, tab_blue, tab_mkt, tab_all, tab_guide) = st.tabs([
     "Top picks", "Trend Template", "VCP setups", "Breakouts", "Stage 1 bases", "RS blue dot",
-    "Breadth & sectors", "All stocks"])
+    "Breadth & sectors", "All stocks", "How to use this scanner"])
 
 with tab_top:
     show(top, "top_picks", f"Passes all 8 Trend Template conditions, <b>RS ≥ {pref_rs}</b>, RS line within 5% "
@@ -324,6 +324,150 @@ with tab_all:
          "Every rated stock" + (" (liquid only)" if liquid_only else "") +
          (f" with market cap above ₹{min_cap:,} cr" if cap_ok and min_cap > 0 else "") +
          ". <b>Click any column header to sort.</b>")
+
+with tab_guide:
+    st.markdown("""
+    <style>
+    .guide-hero{padding:26px 28px;border-radius:18px;margin:4px 0 20px;
+      background:linear-gradient(120deg,rgba(37,99,235,.13),rgba(16,185,129,.10));
+      border:1px solid rgba(100,116,139,.22)}
+    .guide-eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:.72rem;font-weight:700;
+      color:#2563eb;margin-bottom:8px}
+    .guide-hero h2{margin:0 0 8px;font-size:1.65rem}
+    .guide-hero p{margin:0;max-width:900px;line-height:1.6;opacity:.82}
+    .guide-card{border:1px solid rgba(100,116,139,.23);border-radius:14px;padding:16px 17px;
+      min-height:148px;margin:0 0 12px;background:rgba(127,127,127,.035)}
+    .guide-card .gicon{font-size:1.35rem;margin-bottom:8px}
+    .guide-card h4{margin:0 0 6px;font-size:1rem}
+    .guide-card p{margin:0;font-size:.9rem;line-height:1.5;opacity:.78}
+    .guide-step{border-left:3px solid #3b82f6;padding:4px 0 6px 14px;margin:8px 0 12px}
+    .guide-step b{font-size:.98rem}
+    .guide-step p{margin:3px 0 0;line-height:1.5;opacity:.78}
+    .guide-callout{padding:14px 16px;border-radius:12px;background:rgba(245,158,11,.10);
+      border:1px solid rgba(245,158,11,.25);line-height:1.55;margin:10px 0}
+    .guide-good{padding:14px 16px;border-radius:12px;background:rgba(16,185,129,.09);
+      border:1px solid rgba(16,185,129,.22);line-height:1.55;margin:10px 0}
+    </style>
+    <div class="guide-hero">
+      <div class="guide-eyebrow">A practical walkthrough</div>
+      <h2>How to use this scanner</h2>
+      <p>Use the scan to shortlist stocks showing relative strength, a constructive trend and a possible setup.
+      Then inspect the chart and decide whether the risk fits your own plan. No single score confirms a trade.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        st.markdown("""<div class="guide-card"><div class="gicon">🧭</div><h4>1 · Check the market</h4>
+        <p>Open <b>Breadth & sectors</b>. See whether participation is broad, narrow or weak before focusing on
+        individual leaders.</p></div>""", unsafe_allow_html=True)
+    with g2:
+        st.markdown("""<div class="guide-card"><div class="gicon">💪</div><h4>2 · Find relative strength</h4>
+        <p>Look for a higher <b>RS Rating</b> and positive benchmark-relative performance. These answer
+        different questions—see the distinction below.</p></div>""", unsafe_allow_html=True)
+    with g3:
+        st.markdown("""<div class="guide-card"><div class="gicon">🔎</div><h4>3 · Inspect the setup</h4>
+        <p>Check trend conditions, volume, base or breakout context, then open the stock details and confirm
+        the price action on a chart.</p></div>""", unsafe_allow_html=True)
+
+    st.markdown("#### Start with the right meaning of RS")
+    rs1, rs2 = st.columns(2)
+    with rs1:
+        st.markdown("""<div class="guide-card"><h4>RS Rating · relative rank within this scan</h4>
+        <p>A 1–99 percentile-style score ranking each rated stock against the other stocks in this universe.
+        It is based on weighted 3-, 6-, 9- and 12-month returns (40%, 20%, 20%, 20%). A higher value means
+        stronger performance versus this stock universe. It does <b>not</b> compare directly with an index.</p></div>""",
+                    unsafe_allow_html=True)
+    with rs2:
+        st.markdown("""<div class="guide-card"><h4>RS vs benchmark · performance against an index</h4>
+        <p><b>RS vs Nifty · 3M / 6M</b> compares the stock’s price movement with the downloaded benchmark over
+        those periods. Positive means it outperformed that benchmark; negative means it underperformed.
+        The <b>RS Line</b> tracks the stock-to-index ratio; a new high means that ratio reached a 52-week high.</p></div>""",
+                    unsafe_allow_html=True)
+    st.markdown("""<div class="guide-callout"><b>Benchmark currently used:</b> Nifty 500 (Yahoo Finance symbol
+    <code>^CRSLDX</code>); if that download fails, the pipeline falls back to Nifty 50 (<code>^NSEI</code>).
+    The displayed “RS vs Nifty” figures use the benchmark series returned by the scan. The current saved table
+    does not record which fallback was used, so check the Daily scan log if you need to verify that run.</div>""",
+                unsafe_allow_html=True)
+
+    st.markdown("#### Read the scanner from broad context to one stock")
+    steps = [
+        ("A", "Breadth & sectors", "Use advancing/declining stocks and the share above the 50-, 150- and 200-day averages to judge market participation. Sector strength ranks groups using liquid stocks; a leading sector can provide useful context."),
+        ("B", "RS Rating and RS vs benchmark", "Prefer a high or improving RS Rating for leaders, then check whether 3M/6M benchmark-relative figures are positive and whether the RS line is near a high. These are complementary signals, not guarantees."),
+        ("C", "Trend Template (score / 8)", "Open the Trend Template tab or the stock’s ⓘ details. Review each condition, not just the total. A full 8/8 means all eight rules pass on the latest data; it does not mean the stock is automatically a buy."),
+        ("D", "Trend, volume and setup", "Strong trend / Developing / Weakening are rule-based summaries. Volume pressure compares volume on up days with down days over 20 sessions; it is not delivery data. VCP, base and breakout labels are pattern candidates that need chart confirmation."),
+        ("E", "Confirm and manage risk", "Click the symbol to open its TradingView chart. Check the actual structure, liquidity, gaps, upcoming events and a sensible invalidation/risk level before making any decision."),
+    ]
+    for letter, title, description in steps:
+        st.markdown(f'<div class="guide-step"><b><span style="color:#3b82f6">{letter}</span> · {title}</b><p>{description}</p></div>',
+                    unsafe_allow_html=True)
+
+    st.markdown("#### What does Trend Template 8/8 mean?")
+    st.caption("The score counts how many of these rules pass for a stock on the latest scan date.")
+    tt_rules = [
+        "Price is above both the 150-day and 200-day averages.",
+        "The 150-day average is above the 200-day average.",
+        "The 200-day average is rising versus about one month ago.",
+        "The 50-day average is above both the 150-day and 200-day averages.",
+        "Price is above the 50-day average.",
+        "Price is at least 30% above its 52-week closing low.",
+        "Price is within 25% of its 52-week closing high.",
+        f"RS Rating is at least {m.MIN_RS_TT}.",
+    ]
+    tt_left, tt_right = st.columns(2)
+    for i, rule in enumerate(tt_rules):
+        with (tt_left if i < 4 else tt_right):
+            st.markdown(f'<div class="guide-step"><b><span style="color:#10b981">✓ {i + 1}</span></b><p>{rule}</p></div>',
+                        unsafe_allow_html=True)
+
+    st.markdown("#### What the setup tabs are looking for")
+    s1, s2 = st.columns(2)
+    with s1:
+        st.markdown(f"""<div class="guide-card"><h4>VCP setups</h4><p>Possible volatility contraction patterns:
+        successively tighter pullbacks with quieter volume, with price near a marked pivot. The pivot is a level
+        to watch; wait for chart confirmation rather than treating proximity as a signal.</p></div>
+        <div class="guide-card"><h4>Stage 1 bases</h4><p>Stocks around a flat 150-day average with a sideways base.
+        These are early watch-list candidates; the scanner does not call a base a confirmed uptrend.</p></div>""",
+                    unsafe_allow_html=True)
+    with s2:
+        st.markdown(f"""<div class="guide-card"><h4>Breakouts</h4><p>Recent close above the prior
+        {m.BREAKOUT_LOOKBACK}-session high, with volume at least {m.BREAKOUT_VOL_X}× the 50-day average and
+        other range/base checks. Review the candle, volume and nearby resistance yourself.</p></div>
+        <div class="guide-card"><h4>RS blue dot</h4><p>The RS line reaches a 52-week high while the stock price
+        remains more than 2% below its own 52-week high. It highlights relative strength leading price; it is
+        a watch signal, not a forecast.</p></div>""",
+                    unsafe_allow_html=True)
+
+    st.markdown("#### A live example from this scan")
+    st.caption("This small table uses the current scan data to illustrate how the columns fit together. It is an example for learning, not a recommendation.")
+    guide_cols = [c for c in ["Symbol", "Trend_State", "RS_Rating", "RS_Excess_3M_%", "RS_Excess_6M_%",
+                              "TT_Score", "Volume_Pressure_20D", "Stage"] if c in result.columns]
+    guide_example = result.sort_values(["RS_Rating", "Weighted_Return_%"], ascending=False).head(5)
+    if not guide_example.empty:
+        ui.table(guide_example, guide_cols, ("RS_Rating", -1), font, "Compact",
+                 search_keys=["Symbol", "Company Name"])
+    else:
+        st.info("A live example will appear when scan results are available.")
+
+    st.markdown("#### Use the filters to build a watchlist")
+    f1, f2 = st.columns(2)
+    with f1:
+        st.markdown("""<div class="guide-card"><h4>Keep the first pass broad</h4>
+        <p>Start with the symbol/company search, sector filter and a modest minimum RS. Then narrow to liquid
+        stocks or raise the RS threshold if the list is still large. Filters affect stock-list tabs; the
+        Breadth & sectors calculations use the liquid universe independently.</p></div>""", unsafe_allow_html=True)
+    with f2:
+        st.markdown("""<div class="guide-card"><h4>Open details, then the chart</h4>
+        <p>Use the small <b>ⓘ</b> button beside a symbol for the in-app summary. Click the symbol itself to open
+        its TradingView chart. Tables can be sorted by clicking a column heading and downloaded as CSV.</p></div>""",
+                    unsafe_allow_html=True)
+
+    st.markdown("#### Important limits")
+    st.markdown("""<div class="guide-good"><b>Best practice:</b> treat this app as a discovery and comparison tool.
+    Confirm signals on the chart, consider liquidity and downside risk, and use your own rules. Scores, pattern
+    labels and market context are based on historical data; they can be delayed, incomplete or wrong and do not
+    predict future returns.</div>""", unsafe_allow_html=True)
+    st.caption(f"Data as of {as_of:%d %b %Y}. RS ratings require sufficient price history; calculated scan coverage is {len(result)} stocks.")
 
 with st.expander("Notes & limitations"):
     st.markdown(
