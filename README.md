@@ -13,7 +13,6 @@ for relative strength, momentum, and classic trend / pattern setups. Educational
 - **Market-cap filter:** shares outstanding x latest close, in Rs crore.
 - **Breadth and sector strength** (liquid stocks only): advancers / decliners, 52-week highs and lows, share of
   stocks above the 50 / 150 / 200-day averages, Stage 2 and Trend Template shares, and a sector ranking.
-  Industry and basic-industry levels appear when `nse_classification.csv` is added (optional).
 - Sortable, responsive tables, font choice, light / dark mode, CSV downloads.
 
 ## How it works
