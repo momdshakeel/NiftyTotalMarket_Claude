@@ -1,7 +1,7 @@
 """
 Nifty Total Market (Nifty 500 + Microcap 250) RS Rating scanner - Streamlit app.
 RS Rating, Minervini Trend Template, VCP setups, volume breakouts, Weinstein stages,
-liquidity flag, market breadth and sector / industry strength.
+liquidity flag, market breadth and sector strength.
 
 Run locally:   pip install -r requirements.txt && streamlit run app.py
 Deploy free:   push this folder to GitHub -> share.streamlit.io -> New app -> app.py
@@ -11,7 +11,7 @@ results to data/latest.csv after the market closes, and this app just reads them
 seconds. Until the first daily run exists, the app falls back to calculating everything live.
 
 Files in the repository: app.py, ui.py, nse500_rs_rating.py, build_data.py, requirements.txt,
-.github/workflows/daily_scan.yml   (optional: nse_classification.csv, .streamlit/config.toml)
+.github/workflows/daily_scan.yml   (optional: .streamlit/config.toml)
 """
 import os
 import sys
@@ -119,7 +119,6 @@ else:
         if up is None:
             st.stop()
         meta = m.parse_universe(pd.read_csv(up))
-    meta = m.attach_classification(meta, m.load_classification(os.path.join(HERE, m.CLASSIFICATION_FILE)))
     n_universe = len(meta)
 
     try:
@@ -142,7 +141,6 @@ if remote_data_error is not None:
     st.warning(f"Could not fetch the latest scan files from GitHub ({remote_data_error}). "
                "Showing the deployed local copy if available.")
 
-has_cls = bool(result["Basic Industry"].notna().any()) if "Basic Industry" in result.columns else False
 n_liquid = int(result["Liquid"].sum())
 market_context = m.market_breadth(result)
 
@@ -151,14 +149,14 @@ custom_rules = []
 with st.sidebar:
     st.subheader("Filters")
     liquid_only = st.toggle("Liquid stocks only", value=False,
-                            help=f"Liquid = {LIQ_TEXT}. Applies to the stock lists. Breadth, sector and "
-                                 f"industry figures always use liquid stocks.")
+                            help=f"Liquid = {LIQ_TEXT}. Applies to the stock lists. Breadth and sector "
+                                 f"figures always use liquid stocks.")
     cap_ok = bool(result["Market_Cap_Cr"].notna().mean() >= 0.5)
     min_cap = st.number_input("Market cap above (₹ crore)", min_value=0, value=500, step=100,
                               disabled=not cap_ok,
                               help="Market cap = shares outstanding × latest close (Yahoo Finance). "
                                    "Set 0 to switch the filter off. Applies to the stock lists; breadth, "
-                                   "sector and industry figures don't use it.")
+                                   "sector figures don't use it.")
     incl_unknown = st.checkbox("Include unknown market cap", value=False, disabled=not cap_ok,
                                help="Stocks for which Yahoo has no share count.")
     if cap_ok:
@@ -172,8 +170,6 @@ with st.sidebar:
     pref_rs = st.slider("RS for 'Top picks'", 50, 99, m.PREFERRED_RS)
     rsi_min = st.slider("RSI above (Top picks)", 0, 80, 50)
     pick_sector = st.multiselect("Sector", sorted(result["Sector"].dropna().unique()))
-    pick_basic = (st.multiselect("Basic industry", sorted(result["Basic Industry"].dropna().unique()))
-                  if has_cls else [])
     q = st.text_input("Search symbol / company")
     custom_metric_fields = [
         "RS_Rating", "RS_Change", "RS_Excess_3M_%", "RS_Excess_6M_%", "Weighted_Return_%",
@@ -255,8 +251,6 @@ if cap_ok and min_cap > 0:
 df = df[df["RS_Rating"] >= min_rs]
 if pick_sector:
     df = df[df["Sector"].isin(pick_sector)]
-if pick_basic:
-    df = df[df["Basic Industry"].isin(pick_basic)]
 if q.strip():
     s = q.strip().lower()
     df = df[df["Symbol"].str.lower().str.contains(s, regex=False)
@@ -298,14 +292,6 @@ ui.kpis([
     ("RS blue dot", len(blue), "RS line leads price", "#ec4899"),
     ("Liquid stocks", n_liquid, f"of {len(result)} · ≥ ₹{m.MIN_TRADED_VALUE_CR:.0f} cr/day", "#14b8a6"),
 ])
-
-
-def stock_cols(keys):
-    """Insert the NSE basic-industry column after Sector when the classification file is loaded."""
-    keys = list(keys)
-    if has_cls and "Sector" in keys:
-        keys.insert(keys.index("Sector") + 1, "Basic Industry")
-    return keys
 
 
 def _reset_columns(state_key, defaults):
@@ -424,7 +410,7 @@ def show(frame, name, text, keys=None, sort=("RS_Rating", -1), titles=None):
     if view == "Strength map":
         stock_strength_map(frame, name)
     else:
-        defaults = stock_cols(keys or ui.COLS_DEFAULT)
+        defaults = list(keys or ui.COLS_DEFAULT)
         visible = choose_table_columns(frame, defaults, name)
         if visible:
             ui.table(frame, visible, sort, font, density, titles=titles,
@@ -521,37 +507,30 @@ def show_breadth_and_sectors():
         ("Pass Trend Template", b["pct_tt"], "all 8 Minervini conditions"),
     ])
 
-    st.markdown("#### Sector & industry strength")
-    levels = ["Sector"] + (["Industry", "Basic Industry"] if has_cls else [])
-    level = st.radio("Group by", levels, horizontal=True,
-                     help="Sector = NSE's 22 sectors (from NSE's index list). Industry and Basic "
-                          "Industry come from NSE's 4-level classification file.")
-    if not has_cls:
-        st.caption("Industry / basic-industry levels need `nse_classification.csv` next to app.py - see "
-                   "the notes at the bottom of the page for the one-time setup.")
-    min_n = st.slider("Minimum liquid stocks per group", 1, 10, 3,
+    st.markdown("#### Sector strength")
+    min_n = st.slider("Minimum liquid stocks per sector", 1, 10, 3,
                       help="Small groups give noisy scores, so they are hidden below this size.")
-    ind = m.industry_strength(result, min_stocks=min_n, level=level)
-    if ind.empty:
-        st.info("No groups meet the minimum size.")
+    groups = m.sector_strength(result, min_stocks=min_n)
+    if groups.empty:
+        st.info("No sectors meet the minimum size.")
         return
-    liquid_groups = result[result["Liquid"] & result[level].notna()].copy()
-    rotation = (liquid_groups.groupby(level).agg(
+    liquid_groups = result[result["Liquid"] & result["Sector"].notna()].copy()
+    rotation = (liquid_groups.groupby("Sector").agg(
         Median_RS_3M=("RS_Excess_3M_%", "median"),
         Improving_Pct=("RS_Improving", "mean"),
         Stocks=("Symbol", "size"),
-    ).reset_index().rename(columns={level: "Group"}))
+    ).reset_index().rename(columns={"Sector": "Group"}))
     rotation["Improving_Pct"] = rotation["Improving_Pct"] * 100
     rotation = rotation[rotation["Stocks"] >= min_n].dropna(
         subset=["Median_RS_3M", "Improving_Pct"]
     )
     if not rotation.empty:
-        st.markdown(f"#### {level} rotation map")
+        st.markdown("#### Sector rotation map")
         ui.note("Each bubble is a group; larger bubbles contain more liquid stocks. The horizontal axis is "
                 "median 3-month RS versus the benchmark. The vertical axis is the share of group members "
                 "whose RS improved versus the prior 3-month period. This scanner-derived rotation map is "
                 "not a classic index-based RRG chart.")
-        rotation = rotation_chart(rotation, level)
+        rotation = rotation_chart(rotation, "Sector")
         quadrant_counts = rotation["Quadrant"].value_counts()
         ui.kpis([
             ("Leading", int(quadrant_counts.get("Leading", 0)), "positive RS · most members improving", "#16a36a"),
@@ -559,23 +538,24 @@ def show_breadth_and_sectors():
             ("Weakening", int(quadrant_counts.get("Weakening", 0)), "positive RS · fewer members improving", "#e6a323"),
             ("Lagging", int(quadrant_counts.get("Lagging", 0)), "negative RS · fewer members improving", "#dc4c5a"),
         ])
-    ui.note(f"<b>{len(ind)}</b> groups · Ranked by a blend of <b>median RS Rating (50%)</b>, "
+    ui.note(f"<b>{len(groups)}</b> sectors · Ranked by a blend of <b>median RS Rating (50%)</b>, "
             f"<b>share of stocks with RS ≥ 80 (25%)</b> "
             f"and <b>share passing the Trend Template (25%)</b>.")
-    group_columns = choose_table_columns(ind, ui.COLS_INDUSTRY, f"groups_{level}",
-                                        label="Visible group columns")
+    group_columns = choose_table_columns(groups, ui.COLS_SECTOR_STRENGTH, "sector_strength",
+                                        label="Visible sector columns")
     if group_columns:
-        ui.table(ind, group_columns, ("Rank", 1), font, density, titles={"Group": level},
-                 search_keys=["Group"], search_label="Search group / industry")
+        ui.table(groups, group_columns, ("Rank", 1), font, density, titles={"Group": "Sector"},
+                 search_keys=["Group"], search_label="Search sector")
     else:
-        st.info("Select at least one column to display this group table.")
-    st.download_button("⬇️ Download CSV", ind.to_csv(index=False).encode("utf-8"),
-                       file_name=f"totalmarket_{level.lower().replace(' ', '_')}_strength_{as_of.date()}.csv",
+        st.info("Select at least one column to display the sector table.")
+    st.download_button("⬇️ Download CSV", groups.to_csv(index=False).encode("utf-8"),
+                       file_name=f"totalmarket_sector_strength_{as_of.date()}.csv",
                        mime="text/csv", key="dl_group_table")
-    st.markdown(f"#### Stocks in a {level.lower()}")
-    pick = st.selectbox(f"Choose a {level.lower()} (listed by strength)", ind["Group"].tolist())
-    members = result[(result[level] == pick) & result["Liquid"]].sort_values("RS_Rating", ascending=False)
-    show(members, "group_stocks", f"Liquid stocks in <b>{pick}</b>, sorted by RS Rating.")
+    st.markdown("#### Stocks in a sector")
+    pick = st.selectbox("Choose a sector (listed by strength)", groups["Group"].tolist())
+    members = result[(result["Sector"] == pick) & result["Liquid"]].sort_values(
+        "RS_Rating", ascending=False)
+    show(members, "sector_stocks", f"Liquid stocks in <b>{pick}</b>, sorted by RS Rating.")
 
 
 SCREEN_LIBRARY = {
@@ -819,10 +799,8 @@ with st.expander("Notes & limitations"):
         f"{m.EXTENSION_WARN_PCT:.0f}% above its 50-day SMA. Market breadth is Supportive at ≥60% above both "
         f"the 50- and 200-day SMAs, Weak when fewer than 40% are above either, and Mixed otherwise.\n"
         f"- **Liquid** = {LIQ_TEXT} (close × volume). The *Liquid stocks only* switch filters the stock lists; "
-        f"breadth, sector and industry figures always use liquid stocks.\n"
-        f"- **Sectors** are NSE's 22 sectors, taken from NSE's index list. **Industry** and **Basic industry** come "
-        f"from NSE's 4-level classification and appear only when `nse_classification.csv` is present "
-        f"(currently: {'loaded' if has_cls else 'not loaded'}).\n"
+        f"breadth and sector figures always use liquid stocks.\n"
+        f"- **Sectors** are NSE's 22 sectors, taken from the NSE index constituent list.\n"
         f"- **Market cap** = shares outstanding (Yahoo Finance, cached for a week) × the latest close, in ₹ crore. "
         f"Yahoo's share counts are occasionally stale or off for small companies, so treat borderline cases with care.\n"
         f"- 52-week high/low use closing prices, not intraday extremes.\n"
@@ -833,9 +811,3 @@ with st.expander("Notes & limitations"):
         f"- RS Line is measured against the Nifty 500 index (Yahoo Finance); Yahoo data can have gaps.\n"
         f"- Educational tool, not investment advice."
     )
-    if not has_cls:
-        st.markdown(
-            "**One-time setup for industry & basic-industry levels:** in Colab or on your PC run "
-            "`build_classification_file()` from `nse500_rs_rating.py` (it asks NSE for each stock's "
-            "classification, about 8-10 minutes), then add the saved `nse_classification.csv` to the "
-            "GitHub repository next to `app.py`.")
