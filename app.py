@@ -307,47 +307,63 @@ def show_breadth_and_sectors():
     show(members, "group_stocks", f"Liquid stocks in <b>{pick}</b>, sorted by RS Rating.")
 
 
-(tab_top, tab_tt, tab_vcp, tab_brk, tab_s1, tab_blue, tab_mkt, tab_all, tab_guide) = st.tabs([
-    "Top picks", "Trend Template", "VCP setups", "Breakouts", "Stage 1 bases", "RS blue dot",
-    "Breadth & sectors", "All stocks", "How to use this scanner"])
+SCREEN_LIBRARY = {
+    "🏆  Discovery · Top picks": "top",
+    "💪  Strength · Trend Template": "trend",
+    "🧩  Setups · VCP setups": "vcp",
+    "🚀  Setups · Breakouts": "breakouts",
+    "🧱  Setups · Stage 1 bases": "bases",
+    "🔵  Strength · RS blue dot": "blue_dot",
+    "🌐  Market · Breadth & sectors": "market",
+    "📋  Universe · All stocks": "all",
+    "📖  Learn · How to use this scanner": "guide",
+}
+selected_screen = st.selectbox(
+    "🔎 Find a screen",
+    list(SCREEN_LIBRARY),
+    key="screen_library",
+    help="Type to search, then choose a scanner view. The list is grouped by purpose.",
+)
+active_screen = SCREEN_LIBRARY[selected_screen]
+ui.note("Choose a screen from the searchable library. Use the sidebar filters to narrow stock lists.")
 
-with tab_top:
+if active_screen == "top":
     show(top, "top_picks", f"Passes all 8 Trend Template conditions, <b>RS ≥ {pref_rs}</b>, RS line within 5% "
                            f"of its 52-week high and <b>RSI &gt; {rsi_min}</b>.")
-with tab_tt:
+elif active_screen == "trend":
     show(tt, "trend_template", "All 8 Minervini conditions: price above the 50/150/200 SMA, 150 &gt; 200 SMA, "
                                "200 SMA rising, 30% above the 52-week low, within 25% of the 52-week high, "
                                "RS ≥ 70.")
-with tab_vcp:
+elif active_screen == "vcp":
     show(vcp, "vcp_setups",
          "<b>Stage 2</b> stocks with 2+ successively tighter pullbacks (last one ≤ 10%), volume dried up over the "
          f"last 10 days (≤ {int(m.VOL_DRYUP_RATIO * 100)}% of the 50-day average) and price "
          f"0-{m.VCP_NEAR_PIVOT:.0f}% below the <b>pivot</b>. Watch for a close above the pivot on heavy "
          "volume. Closest to pivot first.", ui.COLS_PATTERN, ("Pct_To_Pivot", 1))
-with tab_brk:
+elif active_screen == "breakouts":
     show(brk, "volume_breakouts",
          f"Closed above the prior {m.BREAKOUT_LOOKBACK}-session high on <b>≥ {m.BREAKOUT_VOL_X}× the 50-day average "
          f"volume</b> in the last {m.BREAKOUT_RECENT_DAYS} sessions, after a base no deeper than "
          f"{int(m.MAX_BASE_DEPTH * 100)}%, closing in the upper half of the day's range.",
          ui.COLS_PATTERN, ("Breakout_Days_Ago", 1))
-with tab_s1:
+elif active_screen == "bases":
     show(s1, "stage1_bases",
          "<b>Stage 1</b> = price around a flat 150-day (30-week) average after a decline, with a sideways base of "
          f"{m.BASE_WINDOWS[0]}+ sessions forming (depth ≤ {int(m.MAX_BASE_DEPTH * 100)}%). Early candidates: "
          "they only become buyable after a breakout into Stage 2. Longest bases first.",
          ui.COLS_PATTERN, ("Base_Days", -1))
-with tab_blue:
+elif active_screen == "blue_dot":
     show(blue, "blue_dot", f"RS line at a 52-week high while price is still more than 2% below its own high "
                            f"(RS ≥ {pref_rs}).")
-with tab_mkt:
+elif active_screen == "market":
     show_breadth_and_sectors()
-with tab_all:
+elif active_screen == "all":
     show(df.sort_values("RS_Rating", ascending=False), "all",
          "Every rated stock" + (" (liquid only)" if liquid_only else "") +
          (f" with market cap above ₹{min_cap:,} cr" if cap_ok and min_cap > 0 else "") +
          ". <b>Click any column header to sort.</b>")
 
-with tab_guide:
+else:
     st.markdown("""
     <style>
     .guide-hero{padding:26px 28px;border-radius:18px;margin:4px 0 20px;
