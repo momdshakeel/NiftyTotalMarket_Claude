@@ -409,14 +409,34 @@ SCREEN_LIBRARY = {
     "📋  Universe · All stocks": "all",
     "📖  Learn · How to use this scanner": "guide",
 }
-selected_screen = st.selectbox(
-    "🔎 Find a screen",
-    list(SCREEN_LIBRARY),
-    key="screen_library",
-    help="Type to search, then choose a scanner view. The list is grouped by purpose.",
-)
-active_screen = SCREEN_LIBRARY[selected_screen]
-ui.note("Choose a screen from the searchable library. Use the sidebar filters to narrow stock lists.")
+SCREEN_DESCRIPTIONS = {
+    "top": "A focused shortlist of high-RS stocks passing the trend and RS-line checks.",
+    "trend": "Stocks meeting all eight Minervini Trend Template conditions.",
+    "vcp": "Tightening bases with quieter volume and price near a possible pivot.",
+    "breakouts": "Recent price breakouts supported by elevated volume.",
+    "bases": "Early sideways bases around a flat long-term moving average.",
+    "blue_dot": "Stocks whose relative-strength line leads price to a 52-week high.",
+    "market": "Market participation, group strength, and the new rotation map.",
+    "all": "The full rated universe, with the current sidebar filters applied.",
+    "guide": "Definitions and a practical workflow for reading scanner results.",
+}
+with st.container(border=True):
+    screen_picker, screen_summary = st.columns([1.05, 1.35], gap="large", vertical_alignment="center")
+    with screen_picker:
+        selected_screen = st.selectbox(
+            "🔎 Screen library · type to search",
+            list(SCREEN_LIBRARY),
+            key="screen_library",
+            help="Search and choose a scanner view. Screens are grouped by purpose.",
+        )
+    active_screen = SCREEN_LIBRARY[selected_screen]
+    with screen_summary:
+        st.markdown(
+            f'<div class="screen-info"><div class="kicker">Selected view</div>'
+            f'<div class="heading">{selected_screen.split("·", 1)[-1].strip()}</div>'
+            f'<div class="description">{SCREEN_DESCRIPTIONS[active_screen]}</div></div>',
+            unsafe_allow_html=True,
+        )
 
 if active_screen == "top":
     show(top, "top_picks", f"Passes all 8 Trend Template conditions, <b>RS ≥ {pref_rs}</b>, RS line within 5% "
