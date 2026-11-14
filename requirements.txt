@@ -1,5 +1,5 @@
 streamlit>=1.50
-altair>=5,<6
+altair>=6,<7
 yfinance
 pandas
 numpy
