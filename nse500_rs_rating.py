@@ -18,8 +18,8 @@
 #
 # Output: CSVs + a self-contained web dashboard (nse500_rs_dashboard.html)
 # Extras: Weinstein stage (1-4), base detection, VCP + volume-breakout scans,
-#         Liquidity flag (avg 20-day traded value >= Rs 10 crore); sector, industry and breadth
-#         figures use liquid stocks only; optional NSE basic-industry classification.
+#         Liquidity flag (avg 20-day traded value >= Rs 10 crore); sector and breadth
+#         figures use liquid stocks only.
 #         RS Line (stock / Nifty 500) new-high flags, RS "blue dot"
 #         (RS line at 52w high before price), RSI(14)
 # ============================================================
@@ -35,7 +35,6 @@ from concurrent.futures import ThreadPoolExecutor
 import warnings
 from datetime import datetime, timedelta, timezone
 import requests
-from urllib.parse import quote
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -64,7 +63,6 @@ UNIVERSE_FALLBACK_URLS = (       # used if the Total Market file is unavailable
     "https://nsearchives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
 )
 LOCAL_UNIVERSE_FILE = "ind_niftytotalmarket_list.csv"   # optional local copy of the NSE list
-CLASSIFICATION_FILE = "nse_classification.csv"          # optional cache: NSE industry / basic industry
 
 # ---- Market cap (shares outstanding x latest close, in Rs crore) ----
 MIN_MARKET_CAP_CR = 500.0        # stock-list filter: market cap above Rs 500 crore (0 = off)
@@ -105,9 +103,8 @@ DOWN_UP_VOLUME_DOMINANT = 0.80
 EXTENSION_WARN_PCT = 10.0        # flag price >=10% above its 50-day average
 
 
-# ---------------- 1. Universe + NSE classification ----------------
+# ---------------- 1. Universe ----------------
 _HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-_CLS_COLS = ["Macro Sector", "Industry", "Basic Industry"]
 
 
 def parse_universe(df):
@@ -152,107 +149,6 @@ def load_universe(local_file=None):
     except Exception as e:
         print(f"Fallback lists also failed ({e}).")
         return None
-
-
-def load_classification(path=None):
-    """Cached NSE classification (Symbol, Macro Sector, Industry, Basic Industry); empty if absent."""
-    path = path or CLASSIFICATION_FILE
-    cols = ["Symbol"] + _CLS_COLS
-    if os.path.exists(path):
-        try:
-            df = pd.read_csv(path)
-            if "Symbol" in df.columns:
-                for c in _CLS_COLS:
-                    if c not in df.columns:
-                        df[c] = np.nan
-                return df[cols].dropna(subset=["Symbol"]).drop_duplicates("Symbol")
-        except Exception as e:
-            print(f"Could not read {path} ({e})")
-    return pd.DataFrame(columns=cols)
-
-
-def attach_classification(meta, cls):
-    """Add Macro Sector / Industry / Basic Industry (NaN where unknown) to the universe table."""
-    meta = meta.drop(columns=[c for c in _CLS_COLS if c in meta.columns])
-    if cls is None or cls.empty:
-        for c in _CLS_COLS:
-            meta[c] = np.nan
-        return meta
-    return meta.merge(cls[["Symbol"] + _CLS_COLS].drop_duplicates("Symbol"), on="Symbol", how="left")
-
-
-def _nse_session():
-    s = requests.Session()
-    s.headers.update({**_HEADERS, "Accept": "application/json, text/plain, */*",
-                      "Accept-Language": "en-US,en;q=0.9"})
-    s.get("https://www.nseindia.com/", timeout=20)          # sets the cookies the API expects
-    return s
-
-
-def fetch_classification(symbols, existing=None, delay=0.6, max_consecutive_fail=15,
-                         save_to=None, session=None):
-    """Best-effort download of NSE's 4-level classification (macro sector, sector, industry,
-    basic industry) from NSE's quote API, one symbol at a time. Resumable: symbols already in
-    `existing` are skipped. NSE often blocks cloud servers, so run this on your own machine or
-    Colab, then keep the saved CSV."""
-    existing = existing if existing is not None else pd.DataFrame(columns=["Symbol"] + _CLS_COLS)
-    done = set(existing["Symbol"]) if len(existing) else set()
-    todo = [x for x in symbols if x not in done]
-    if not todo:
-        return existing
-    sess = session or _nse_session()
-    rows, fails = [], 0
-
-    def _save():
-        out = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
-        if save_to:
-            out.to_csv(save_to, index=False)
-        return out
-
-    for i, sym in enumerate(todo, 1):
-        info = None
-        try:
-            r = sess.get("https://www.nseindia.com/api/quote-equity", params={"symbol": sym},
-                         headers={"Referer": f"https://www.nseindia.com/get-quotes/equity?symbol={quote(sym)}"},
-                         timeout=20)
-            if r.status_code == 200:
-                info = (r.json() or {}).get("industryInfo")
-        except Exception:
-            info = None
-        if info and info.get("basicIndustry"):
-            rows.append({"Symbol": sym, "Macro Sector": info.get("macro"), "Industry": info.get("industry"),
-                         "Basic Industry": info.get("basicIndustry")})
-            fails = 0
-        else:
-            fails += 1
-            if fails >= max_consecutive_fail:
-                print(f"NSE stopped answering after {i} symbols (blocked?). Saved what we have; "
-                      f"run again later or from another network to continue.")
-                break
-        if i % 50 == 0:
-            print(f"  classified {i}/{len(todo)}")
-            _save()
-        time.sleep(delay)
-    return _save()
-
-
-def build_classification_file(path=None):
-    """One-off helper: download NSE industry / basic-industry for every stock in the universe
-    and cache it in nse_classification.csv (run in Colab or on your PC, then upload the file
-    next to app.py)."""
-    path = path or CLASSIFICATION_FILE
-    meta = load_universe()
-    if meta is None:
-        print("No universe available."); return None
-    cls = fetch_classification(meta["Symbol"].tolist(), existing=load_classification(path), save_to=path)
-    cov = int(cls["Basic Industry"].notna().sum()) if len(cls) else 0
-    print(f"Saved {path}: {cov} of {len(meta)} stocks classified.")
-    try:
-        from google.colab import files
-        files.download(path)
-    except Exception:
-        pass
-    return cls
 
 
 # ---------------- 2. Price download ----------------
@@ -682,15 +578,14 @@ def build_table(prices, bench, meta, ohlcv=None, shares=None):
     out["Trend_State"] = np.select(
         [strong, weakening, developing], ["Strong trend", "Weakening", "Developing"], default="Mixed")
     out.index.name = "Ticker"
-    keep = [c for c in ["Ticker", "Company Name", "Sector", "Symbol", "Series",
-                        "Macro Sector", "Industry", "Basic Industry"] if c in meta.columns]
+    keep = [c for c in ["Ticker", "Company Name", "Sector", "Symbol", "Series"] if c in meta.columns]
     out = out.reset_index().merge(meta[keep], on="Ticker", how="left")
 
     if "Sector" in out.columns:
-        sector_strength = industry_strength(out, min_stocks=3, level="Sector")
-        if not sector_strength.empty:
-            sector_lookup = sector_strength[["Group", "Rank", "Industry_Score"]].rename(columns={
-                "Group": "Sector", "Rank": "Sector_Rank", "Industry_Score": "Sector_Strength"
+        sector_rows = sector_strength(out, min_stocks=3)
+        if not sector_rows.empty:
+            sector_lookup = sector_rows[["Group", "Rank", "Sector_Score"]].rename(columns={
+                "Group": "Sector", "Rank": "Sector_Rank", "Sector_Score": "Sector_Strength"
             })
             out = out.merge(sector_lookup, on="Sector", how="left")
         else:
@@ -711,13 +606,12 @@ def build_table(prices, bench, meta, ohlcv=None, shares=None):
                .reset_index(drop=True), end_date)
 
 
-def industry_strength(result, min_stocks=3, level="Sector", liquid_only=True):
-    """Rank sectors / industries / basic industries by the strength of their stocks.
+def sector_strength(result, min_stocks=3, liquid_only=True):
+    """Rank NSE sectors by the strength of their constituent stocks.
     Uses liquid stocks only (avg 20-day traded value >= Rs 10 crore) unless liquid_only=False.
-    level: "Sector" (NSE's 22 sectors, always available), or "Industry" / "Basic Industry" /
-    "Macro Sector" when the NSE classification file is loaded.
     Score (1-99) = percentile rank of 50% median RS Rating + 25% share of stocks with RS >= 80
     + 25% share passing the Trend Template. Groups with fewer than `min_stocks` stocks are skipped."""
+    level = "Sector"
     if level not in result.columns:
         return pd.DataFrame()
     r = result
@@ -750,8 +644,8 @@ def industry_strength(result, min_stocks=3, level="Sector", liquid_only=True):
         return out.reset_index()
     pr = lambda x: x.rank(pct=True)
     blend = 0.5 * pr(out["Median_RS"]) + 0.25 * pr(out["Pct_RS80"]) + 0.25 * pr(out["Pct_TT_Pass"])
-    out.insert(0, "Industry_Score", rs_rating(blend))
-    out = out.sort_values(["Industry_Score", "Median_RS", "Avg_RS"], ascending=False)
+    out.insert(0, "Sector_Score", rs_rating(blend))
+    out = out.sort_values(["Sector_Score", "Median_RS", "Avg_RS"], ascending=False)
     out.insert(0, "Rank", range(1, len(out) + 1))
     for c in ["Median_RS", "Avg_RS", "Avg_RS_Change", "Avg_Weighted_Return_%"]:
         out[c] = out[c].round(1)
@@ -1016,11 +910,7 @@ def main():
         from google.colab import files
         up = files.upload()
         meta = parse_universe(pd.read_csv(io.BytesIO(next(iter(up.values())))))
-    meta = attach_classification(meta, load_classification())
-    n_cls = int(meta["Basic Industry"].notna().sum())
-    print(f"Universe: {len(meta)} stocks ({UNIVERSE_NAME}); NSE industry classification for {n_cls} of them")
-    if n_cls == 0:
-        print("  (tip: run build_classification_file() once to add NSE industry / basic industry)")
+    print(f"Universe: {len(meta)} stocks ({UNIVERSE_NAME})")
 
     md = download_market_data(meta["Ticker"].tolist())
     prices = md["Close"]
@@ -1086,14 +976,12 @@ def main():
     scan[scan.VCP | scan.Vol_Breakout | scan.Stage1_Base].to_csv(
         "nse500_vcp_breakout_stage1.csv", index=False)
 
-    for level in ("Sector", "Industry", "Basic Industry"):
-        ind = industry_strength(result, level=level)
-        if ind.empty:
-            continue
-        print(f"\n=== {level.upper()} STRENGTH - liquid stocks only (top 15 of {len(ind)}) ===")
-        print(ind[["Rank", "Group", "Industry_Score", "Stocks", "Median_RS", "Pct_RS80",
-                   "Pct_TT_Pass", "Top_Stocks"]].head(15).to_string(index=False))
-        ind.to_csv(f"nse500_{level.lower().replace(' ', '_')}_strength.csv", index=False)
+    sector_rows = sector_strength(result)
+    if not sector_rows.empty:
+        print(f"\n=== SECTOR STRENGTH - liquid stocks only (top 15 of {len(sector_rows)}) ===")
+        print(sector_rows[["Rank", "Group", "Sector_Score", "Stocks", "Median_RS", "Pct_RS80",
+                           "Pct_TT_Pass", "Top_Stocks"]].head(15).to_string(index=False))
+        sector_rows.to_csv("nse500_sector_strength.csv", index=False)
 
     result.to_csv("nse500_rs_rating_full.csv", index=False)
     tt.to_csv("nse500_trend_template_pass.csv", index=False)
