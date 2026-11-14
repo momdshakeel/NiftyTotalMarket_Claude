@@ -275,15 +275,97 @@ def choose_table_columns(frame, defaults, key, label="Visible columns"):
     return selected
 
 
+def stock_strength_map(frame, key):
+    """Plot current stock results by cross-sectional RS rank and benchmark-relative return."""
+    required = ["Symbol", "RS_Rating", "RS_Excess_3M_%"]
+    if frame.empty:
+        st.info("No stocks match the current filters.")
+        return
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        st.info("The strength map will be available after the next scan adds its required fields.")
+        return
+
+    max_stocks = min(250, len(frame))
+    limit = max_stocks
+    if max_stocks > 25:
+        limit = st.slider("Stocks to plot · highest RS first", 25, max_stocks,
+                          min(100, max_stocks), key=f"map_limit_{key}")
+    chart_data = frame.sort_values("RS_Rating", ascending=False).head(limit).copy()
+    chart_data["RS_Rating"] = pd.to_numeric(chart_data["RS_Rating"], errors="coerce")
+    chart_data["RS_Excess_3M_%"] = pd.to_numeric(chart_data["RS_Excess_3M_%"], errors="coerce")
+    if "Vol_x_50d" in chart_data:
+        chart_data["Chart_Volume"] = pd.to_numeric(chart_data["Vol_x_50d"], errors="coerce").fillna(1).clip(.5, 5)
+    else:
+        chart_data["Chart_Volume"] = 1.0
+    if "Trend_State" not in chart_data:
+        chart_data["Trend_State"] = "Mixed"
+    chart_data = chart_data.dropna(subset=["RS_Rating", "RS_Excess_3M_%"])
+    if chart_data.empty:
+        st.info("The selected rows do not have enough RS data to plot.")
+        return
+
+    x_extent = max(1.0, float(chart_data["RS_Excess_3M_%"].abs().max())) * 1.08
+    points = alt.Chart(chart_data).mark_circle(opacity=.82, stroke="white", strokeWidth=.5).encode(
+        x=alt.X("RS_Excess_3M_%:Q", title="RS vs benchmark · 3M (%)",
+                scale=alt.Scale(domain=[-x_extent, x_extent], nice=False)),
+        y=alt.Y("RS_Rating:Q", title="RS Rating · rank within scan", scale=alt.Scale(domain=[1, 99])),
+        size=alt.Size("Chart_Volume:Q", title="Today’s volume / 50-day avg",
+                      scale=alt.Scale(range=[30, 400]), legend=None),
+        color=alt.Color("Trend_State:N", title="Trend",
+                        scale=alt.Scale(
+                            domain=["Strong trend", "Developing", "Mixed", "Weakening"],
+                            range=["#16a36a", "#3b82f6", "#9299a6", "#dc4c5a"],
+                        )),
+        tooltip=[
+            alt.Tooltip("Symbol:N", title="Symbol"),
+            alt.Tooltip("Company Name:N", title="Company") if "Company Name" in chart_data else alt.Tooltip("Symbol:N", title="Company"),
+            alt.Tooltip("RS_Rating:Q", title="RS Rating", format=".0f"),
+            alt.Tooltip("RS_Excess_3M_%:Q", title="RS vs benchmark · 3M (%)", format="+.1f"),
+            alt.Tooltip("Trend_State:N", title="Trend"),
+            alt.Tooltip("Stage:N", title="Stage") if "Stage" in chart_data else alt.Tooltip("Trend_State:N", title="Trend"),
+            alt.Tooltip("Chart_Volume:Q", title="Volume / 50-day avg", format=".1f×"),
+        ],
+    )
+    label_data = chart_data.nlargest(min(6, len(chart_data)), "RS_Rating")
+    labels = alt.Chart(label_data).mark_text(dy=-10, fontSize=10, fontWeight=600).encode(
+        x=alt.X("RS_Excess_3M_%:Q", scale=alt.Scale(domain=[-x_extent, x_extent], nice=False)),
+        y=alt.Y("RS_Rating:Q", scale=alt.Scale(domain=[1, 99])),
+        text=alt.Text("Symbol:N"),
+        color=alt.Color("Trend_State:N", scale=alt.Scale(
+            domain=["Strong trend", "Developing", "Mixed", "Weakening"],
+            range=["#16a36a", "#3b82f6", "#9299a6", "#dc4c5a"],
+        ), legend=None),
+    )
+    zero_line = alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(
+        color="#8b93a1", strokeDash=[5, 4], opacity=.75
+    ).encode(x="x:Q")
+    rs_line = alt.Chart(pd.DataFrame({"y": [70]})).mark_rule(
+        color="#8b93a1", strokeDash=[5, 4], opacity=.75
+    ).encode(y="y:Q")
+    chart = (points + labels + zero_line + rs_line).properties(height=440).configure_view(
+        stroke=None
+    ).configure_axis(grid=True, labelFontSize=11, titleFontSize=12)
+    st.altair_chart(chart, use_container_width=True)
+    st.caption("Each bubble is a stock. Positive horizontal values mean outperformance versus the scan’s "
+               "benchmark; vertical position is the scanner’s separate 1–99 RS Rating. Bubble size reflects "
+               "today’s volume relative to its 50-day average. Hover or tap a bubble for details.")
+
+
 def show(frame, name, text, keys=None, sort=("RS_Rating", -1), titles=None):
     ui.note(f"<b>{len(frame)}</b> stocks · {text}")
-    defaults = stock_cols(keys or ui.COLS_DEFAULT)
-    visible = choose_table_columns(frame, defaults, name)
-    if visible:
-        ui.table(frame, visible, sort, font, density, titles=titles,
-                 search_keys=["Symbol", "Company Name"], market_context=market_context)
+    view = st.segmented_control("View", ["List", "Strength map"], default="List",
+                                key=f"result_view_{name}")
+    if view == "Strength map":
+        stock_strength_map(frame, name)
     else:
-        st.info("Select at least one column to display this table.")
+        defaults = stock_cols(keys or ui.COLS_DEFAULT)
+        visible = choose_table_columns(frame, defaults, name)
+        if visible:
+            ui.table(frame, visible, sort, font, density, titles=titles,
+                     search_keys=["Symbol", "Company Name"], market_context=market_context)
+        else:
+            st.info("Select at least one column to display this table.")
     if not frame.empty:
         st.download_button("⬇️ Download CSV", frame.to_csv(index=False).encode("utf-8"),
                            file_name=f"totalmarket_{name}_{as_of.date()}.csv", mime="text/csv",
@@ -641,7 +723,8 @@ else:
     with f2:
         st.markdown("""<div class="guide-card"><h4>Open details, then the chart</h4>
         <p>Use the small <b>ⓘ</b> button beside a symbol for the in-app summary. Click the symbol itself to open
-        its TradingView chart. Tables can be sorted by clicking a column heading and downloaded as CSV.</p></div>""",
+        its TradingView chart. Switch between <b>List</b> and <b>Strength map</b> to compare current RS signals;
+        the map is not a historical price chart. Tables can be sorted by clicking a column heading and downloaded as CSV.</p></div>""",
                     unsafe_allow_html=True)
 
     st.markdown("#### Important limits")
