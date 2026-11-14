@@ -18,7 +18,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import numpy as np
 import streamlit as st
+import altair as alt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -260,6 +262,71 @@ def show(frame, name, text, keys=None, sort=("RS_Rating", -1), titles=None):
                            key=f"dl_{name}")
 
 
+def rotation_chart(rotation, group_title):
+    """Quadrant map of group-level relative strength and the share of members improving."""
+    rotation = rotation.copy()
+    # Keep the quadrant definitions tied to the two plotted axes.
+    rotation["Quadrant"] = np.select(
+        [
+            (rotation["Median_RS_3M"] >= 0) & (rotation["Improving_Pct"] >= 50),
+            (rotation["Median_RS_3M"] < 0) & (rotation["Improving_Pct"] >= 50),
+            (rotation["Median_RS_3M"] >= 0) & (rotation["Improving_Pct"] < 50),
+        ],
+        ["Leading", "Improving", "Weakening"],
+        default="Lagging",
+    )
+    colors = alt.Scale(
+        domain=["Leading", "Improving", "Weakening", "Lagging"],
+        range=["#16a36a", "#3b82f6", "#e6a323", "#dc4c5a"],
+    )
+    x_extent = max(1.0, float(rotation["Median_RS_3M"].abs().max())) * 1.08
+    x_enc = alt.X(
+        "Median_RS_3M:Q",
+        title="Median RS vs benchmark · 3M (%)",
+        scale=alt.Scale(domain=[-x_extent, x_extent], nice=False),
+    )
+    y_enc = alt.Y(
+        "Improving_Pct:Q",
+        title="Members with improving RS (%)",
+        scale=alt.Scale(domain=[0, 100]),
+    )
+    points = alt.Chart(rotation).mark_circle(opacity=0.88, stroke="white", strokeWidth=0.6).encode(
+        x=x_enc,
+        y=y_enc,
+        size=alt.Size("Stocks:Q", title="Liquid stocks", scale=alt.Scale(range=[100, 850]),
+                       legend=None),
+        color=alt.Color("Quadrant:N", title="Rotation", scale=colors,
+                        legend=alt.Legend(orient="top", direction="horizontal")),
+        tooltip=[
+            alt.Tooltip("Group:N", title=group_title),
+            alt.Tooltip("Quadrant:N", title="Quadrant"),
+            alt.Tooltip("Median_RS_3M:Q", title="Median 3M RS vs benchmark (%)", format=".1f"),
+            alt.Tooltip("Improving_Pct:Q", title="Members with improving RS (%)", format=".0f"),
+            alt.Tooltip("Stocks:Q", title="Liquid stocks", format=".0f"),
+        ],
+    )
+    label_rows = pd.concat(
+        [g.sort_values("Median_RS_3M", ascending=False).head(2)
+         for _, g in rotation.groupby("Quadrant")],
+        ignore_index=True,
+    )
+    labels = alt.Chart(label_rows).mark_text(dy=-11, fontSize=10, fontWeight=600, limit=115).encode(
+        x=x_enc, y=y_enc, text=alt.Text("Group:N"),
+        color=alt.Color("Quadrant:N", scale=colors, legend=None),
+    )
+    vertical = alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(
+        color="#8b93a1", strokeDash=[5, 4], opacity=0.8
+    ).encode(x="x:Q")
+    horizontal = alt.Chart(pd.DataFrame({"y": [50]})).mark_rule(
+        color="#8b93a1", strokeDash=[5, 4], opacity=0.8
+    ).encode(y="y:Q")
+    chart = (points + labels + vertical + horizontal).properties(height=420).configure_view(
+        stroke=None
+    ).configure_axis(grid=True, labelFontSize=11, titleFontSize=12)
+    st.altair_chart(chart, use_container_width=True)
+    return rotation
+
+
 def show_breadth_and_sectors():
     b = m.market_breadth(result)
     ui.note(f"Every figure on this tab uses <b>liquid stocks only</b> ({LIQ_TEXT}): "
@@ -293,6 +360,30 @@ def show_breadth_and_sectors():
     if ind.empty:
         st.info("No groups meet the minimum size.")
         return
+    liquid_groups = result[result["Liquid"] & result[level].notna()].copy()
+    rotation = (liquid_groups.groupby(level).agg(
+        Median_RS_3M=("RS_Excess_3M_%", "median"),
+        Improving_Pct=("RS_Improving", "mean"),
+        Stocks=("Symbol", "size"),
+    ).reset_index().rename(columns={level: "Group"}))
+    rotation["Improving_Pct"] = rotation["Improving_Pct"] * 100
+    rotation = rotation[rotation["Stocks"] >= min_n].dropna(
+        subset=["Median_RS_3M", "Improving_Pct"]
+    )
+    if not rotation.empty:
+        st.markdown(f"#### {level} rotation map")
+        ui.note("Each bubble is a group; larger bubbles contain more liquid stocks. The horizontal axis is "
+                "median 3-month RS versus the benchmark. The vertical axis is the share of group members "
+                "whose RS improved versus the prior 3-month period. This scanner-derived rotation map is "
+                "not a classic index-based RRG chart.")
+        rotation = rotation_chart(rotation, level)
+        quadrant_counts = rotation["Quadrant"].value_counts()
+        ui.kpis([
+            ("Leading", int(quadrant_counts.get("Leading", 0)), "positive RS · most members improving", "#16a36a"),
+            ("Improving", int(quadrant_counts.get("Improving", 0)), "negative RS · most members improving", "#3b82f6"),
+            ("Weakening", int(quadrant_counts.get("Weakening", 0)), "positive RS · fewer members improving", "#e6a323"),
+            ("Lagging", int(quadrant_counts.get("Lagging", 0)), "negative RS · fewer members improving", "#dc4c5a"),
+        ])
     ui.note(f"<b>{len(ind)}</b> groups · Ranked by a blend of <b>median RS Rating (50%)</b>, "
             f"<b>share of stocks with RS ≥ 80 (25%)</b> "
             f"and <b>share passing the Trend Template (25%)</b>.")
@@ -430,7 +521,7 @@ else:
 
     st.markdown("#### Read the scanner from broad context to one stock")
     steps = [
-        ("A", "Breadth & sectors", "Use advancing/declining stocks and the share above the 50-, 150- and 200-day averages to judge market participation. Sector strength ranks groups using liquid stocks; a leading sector can provide useful context."),
+        ("A", "Breadth & sectors", "Use advancing/declining stocks and the share above the 50-, 150- and 200-day averages to judge market participation. The rotation map compares each group’s median 3-month benchmark-relative return with the share of its stocks whose RS is improving. It is a scanner-derived view, not a classic index-based RRG."),
         ("B", "RS Rating and RS vs benchmark", "Prefer a high or improving RS Rating for leaders, then check whether 3M/6M benchmark-relative figures are positive and whether the RS line is near a high. These are complementary signals, not guarantees."),
         ("C", "Trend Template (score / 8)", "Open the Trend Template tab or the stock’s ⓘ details. Review each condition, not just the total. A full 8/8 means all eight rules pass on the latest data; it does not mean the stock is automatically a buy."),
         ("D", "Trend, volume and setup", "Strong trend / Developing / Weakening are rule-based summaries. Volume pressure compares volume on up days with down days over 20 sessions; it is not delivery data. VCP, base and breakout labels are pattern candidates that need chart confirmation."),
