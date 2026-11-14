@@ -252,10 +252,38 @@ def stock_cols(keys):
     return keys
 
 
+def _reset_columns(state_key, defaults):
+    st.session_state[state_key] = list(defaults)
+
+
+def choose_table_columns(frame, defaults, key, label="Visible columns"):
+    """Let each result table choose from the columns it can actually render."""
+    available = [c for c in frame.columns if c in ui.SPEC]
+    default_keys = [c for c in defaults if c in available]
+    state_key = f"visible_columns_{key}"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default_keys
+    with st.expander("⚙️ Customize columns", expanded=False):
+        selected = st.multiselect(
+            label,
+            available,
+            key=state_key,
+            help="Search for fields, select the columns you want, and remove chips to hide columns.",
+        )
+        st.button("Reset default columns", key=f"reset_{state_key}",
+                  on_click=_reset_columns, args=(state_key, default_keys))
+    return selected
+
+
 def show(frame, name, text, keys=None, sort=("RS_Rating", -1), titles=None):
     ui.note(f"<b>{len(frame)}</b> stocks · {text}")
-    ui.table(frame, stock_cols(keys or ui.COLS_DEFAULT), sort, font, density, titles=titles,
-             search_keys=["Symbol", "Company Name"], market_context=market_context)
+    defaults = stock_cols(keys or ui.COLS_DEFAULT)
+    visible = choose_table_columns(frame, defaults, name)
+    if visible:
+        ui.table(frame, visible, sort, font, density, titles=titles,
+                 search_keys=["Symbol", "Company Name"], market_context=market_context)
+    else:
+        st.info("Select at least one column to display this table.")
     if not frame.empty:
         st.download_button("⬇️ Download CSV", frame.to_csv(index=False).encode("utf-8"),
                            file_name=f"totalmarket_{name}_{as_of.date()}.csv", mime="text/csv",
@@ -387,8 +415,13 @@ def show_breadth_and_sectors():
     ui.note(f"<b>{len(ind)}</b> groups · Ranked by a blend of <b>median RS Rating (50%)</b>, "
             f"<b>share of stocks with RS ≥ 80 (25%)</b> "
             f"and <b>share passing the Trend Template (25%)</b>.")
-    ui.table(ind, ui.COLS_INDUSTRY, ("Rank", 1), font, density, titles={"Group": level},
-             search_keys=["Group"], search_label="Search group / industry")
+    group_columns = choose_table_columns(ind, ui.COLS_INDUSTRY, f"groups_{level}",
+                                        label="Visible group columns")
+    if group_columns:
+        ui.table(ind, group_columns, ("Rank", 1), font, density, titles={"Group": level},
+                 search_keys=["Group"], search_label="Search group / industry")
+    else:
+        st.info("Select at least one column to display this group table.")
     st.download_button("⬇️ Download CSV", ind.to_csv(index=False).encode("utf-8"),
                        file_name=f"totalmarket_{level.lower().replace(' ', '_')}_strength_{as_of.date()}.csv",
                        mime="text/csv", key="dl_group_table")
@@ -398,139 +431,8 @@ def show_breadth_and_sectors():
     show(members, "group_stocks", f"Liquid stocks in <b>{pick}</b>, sorted by RS Rating.")
 
 
-WORKSPACE_CARD_OPTIONS = {
-    "🌐 Market pulse": "market_pulse",
-    "🏆 Top picks": "top_picks",
-    "📊 Strongest sectors": "sectors",
-    "💪 Trend leaders": "trend_leaders",
-    "🚀 Breakouts": "breakouts",
-    "🧩 VCP setups": "vcp",
-    "🧱 Stage 1 bases": "stage1",
-    "🔵 RS blue dot": "blue_dot",
-}
-WORKSPACE_DEFAULTS = ["market_pulse", "top_picks", "sectors", "breakouts"]
-
-
-def _sync_workspace_url():
-    selected = st.session_state.get("workspace_cards", [])
-    card_ids = [WORKSPACE_CARD_OPTIONS[label] for label in selected if label in WORKSPACE_CARD_OPTIONS]
-    if card_ids:
-        st.query_params["workspace"] = ",".join(card_ids)
-    elif "workspace" in st.query_params:
-        del st.query_params["workspace"]
-
-
-def show_workspace():
-    if "workspace_cards" not in st.session_state:
-        saved_ids = list(filter(None, st.query_params.get("workspace", "").split(",")))
-        if saved_ids:
-            label_for_id = {card_id: label for label, card_id in WORKSPACE_CARD_OPTIONS.items()}
-            st.session_state["workspace_cards"] = [
-                label_for_id[card_id] for card_id in saved_ids if card_id in label_for_id
-            ]
-        else:
-            st.session_state["workspace_cards"] = [
-                label for label, card_id in WORKSPACE_CARD_OPTIONS.items()
-                if card_id in WORKSPACE_DEFAULTS
-            ]
-
-    st.markdown("### My workspace")
-    st.caption("Pick the cards you want to see. Your selection is saved in this page’s URL; bookmark it or "
-               "open the same link on another device to keep this layout.")
-    selected = st.multiselect(
-        "Add or remove cards",
-        list(WORKSPACE_CARD_OPTIONS),
-        key="workspace_cards",
-        on_change=_sync_workspace_url,
-        help="Select cards to add them. Remove a selected chip to hide that card. Selection order controls display order.",
-    )
-    if not selected:
-        st.info("Your workspace is empty. Add a card above to get started.")
-        return
-
-    breadth = m.market_breadth(result)
-    group_strength = None
-    if any(WORKSPACE_CARD_OPTIONS[label] == "sectors" for label in selected):
-        group_strength = m.industry_strength(result, min_stocks=3, level="Sector").head(5)
-
-    card_ids = [WORKSPACE_CARD_OPTIONS[label] for label in selected]
-    for start in range(0, len(card_ids), 2):
-        row = card_ids[start:start + 2]
-        columns = st.columns(2)
-        for column, card_id in zip(columns, row):
-            with column:
-                with st.container(border=True):
-                    st.markdown('<div class="workspace-card-anchor"></div>', unsafe_allow_html=True)
-                    if card_id == "market_pulse":
-                        st.markdown("#### 🌐 Market pulse")
-                        st.caption(f"{breadth['market_state']} · {as_of:%d %b %Y}")
-                        k1, k2 = st.columns(2)
-                        k1.metric("Advancing", breadth["advancers"])
-                        k2.metric("Declining", breadth["decliners"])
-                        k1.metric("Above 50-day SMA", f"{breadth['pct_above_50']:.0f}%")
-                        k2.metric("Above 200-day SMA", f"{breadth['pct_above_200']:.0f}%")
-                    elif card_id == "top_picks":
-                        st.markdown("#### 🏆 Top picks")
-                        rows = top.head(5)
-                        cols = [c for c in ["Symbol", "RS_Rating", "RS_Excess_3M_%", "TT_Score"] if c in rows]
-                        if rows.empty:
-                            st.info("No stocks match the current Top picks filters.")
-                        else:
-                            st.dataframe(rows[cols], hide_index=True, use_container_width=True, height=235)
-                    elif card_id == "sectors":
-                        st.markdown("#### 📊 Strongest sectors")
-                        if group_strength is None or group_strength.empty:
-                            st.info("No sectors meet the minimum group size.")
-                        else:
-                            cols = [c for c in ["Group", "Industry_Score", "Median_RS", "Pct_Stage2"]
-                                    if c in group_strength]
-                            st.dataframe(group_strength[cols], hide_index=True, use_container_width=True, height=235)
-                    elif card_id == "trend_leaders":
-                        st.markdown("#### 💪 Trend leaders")
-                        rows = tt.sort_values(["RS_Rating", "TT_Score"], ascending=False).head(5)
-                        cols = [c for c in ["Symbol", "RS_Rating", "TT_Score", "RS_Excess_3M_%"] if c in rows]
-                        if rows.empty:
-                            st.info("No stocks currently pass all eight Trend Template checks.")
-                        else:
-                            st.dataframe(rows[cols], hide_index=True, use_container_width=True, height=235)
-                    elif card_id == "breakouts":
-                        st.markdown("#### 🚀 Recent breakouts")
-                        rows = brk.head(5)
-                        cols = [c for c in ["Symbol", "RS_Rating", "Breakout_Vol_x", "Breakout_Days_Ago"] if c in rows]
-                        if rows.empty:
-                            st.info("No recent breakouts match the current filters.")
-                        else:
-                            st.dataframe(rows[cols], hide_index=True, use_container_width=True, height=235)
-                    elif card_id == "vcp":
-                        st.markdown("#### 🧩 VCP setups")
-                        rows = vcp.head(5)
-                        cols = [c for c in ["Symbol", "RS_Rating", "Pct_To_Pivot", "VCP_Contractions"] if c in rows]
-                        if rows.empty:
-                            st.info("No VCP setups match the current filters.")
-                        else:
-                            st.dataframe(rows[cols], hide_index=True, use_container_width=True, height=235)
-                    elif card_id == "stage1":
-                        st.markdown("#### 🧱 Stage 1 bases")
-                        rows = s1.sort_values("Base_Days", ascending=False).head(5)
-                        cols = [c for c in ["Symbol", "RS_Rating", "Base_Days", "Base_Depth_%"] if c in rows]
-                        if rows.empty:
-                            st.info("No Stage 1 bases match the current filters.")
-                        else:
-                            st.dataframe(rows[cols], hide_index=True, use_container_width=True, height=235)
-                    elif card_id == "blue_dot":
-                        st.markdown("#### 🔵 RS blue dot")
-                        rows = blue.head(5)
-                        cols = [c for c in ["Symbol", "RS_Rating", "RS_Excess_3M_%", "Pct_From_52W_High"]
-                                if c in rows]
-                        if rows.empty:
-                            st.info("No blue-dot stocks match the current filters.")
-                        else:
-                            st.dataframe(rows[cols], hide_index=True, use_container_width=True, height=235)
-
-
 SCREEN_LIBRARY = {
     "🏆  Discovery · Top picks": "top",
-    "🏠  Workspace · My workspace": "workspace",
     "💪  Strength · Trend Template": "trend",
     "🧩  Setups · VCP setups": "vcp",
     "🚀  Setups · Breakouts": "breakouts",
@@ -541,7 +443,6 @@ SCREEN_LIBRARY = {
     "📖  Learn · How to use this scanner": "guide",
 }
 SCREEN_DESCRIPTIONS = {
-    "workspace": "Arrange a personal dashboard of market, strength, and setup cards.",
     "top": "A focused shortlist of high-RS stocks passing the trend and RS-line checks.",
     "trend": "Stocks meeting all eight Minervini Trend Template conditions.",
     "vcp": "Tightening bases with quieter volume and price near a possible pivot.",
@@ -570,9 +471,7 @@ with st.container(border=True):
             unsafe_allow_html=True,
         )
 
-if active_screen == "workspace":
-    show_workspace()
-elif active_screen == "top":
+if active_screen == "top":
     show(top, "top_picks", f"Passes all 8 Trend Template conditions, <b>RS ≥ {pref_rs}</b>, RS line within 5% "
                            f"of its 52-week high and <b>RSI &gt; {rsi_min}</b>.")
 elif active_screen == "trend":
