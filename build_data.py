@@ -47,7 +47,6 @@ def main():
     meta = m.load_universe()
     if meta is None:
         sys.exit("ERROR: could not load the Nifty Total Market list from NSE.")
-    meta = m.attach_classification(meta, m.load_classification())
     print(f"Universe: {len(meta)} stocks")
 
     for attempt in range(1, 4):                       # Yahoo sometimes throttles: retry a few times
