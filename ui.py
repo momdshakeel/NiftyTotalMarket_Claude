@@ -192,8 +192,6 @@ SPEC = {
     "Sector": dict(t="Sector", type="txt", pri=3, left=True),
     "Sector_Rank": dict(t="Sector #", type="n0", pri=3),
     "Sector_Strength": dict(t="Sector strength", type="bar", pri=3),
-    "Industry": dict(t="Industry", type="txt", pri=3, left=True),
-    "Basic Industry": dict(t="Basic industry", type="txt", pri=3, left=True),
     "Liquid": dict(t="Liquid", type="chk", pri=2),
     "Avg_Value_Cr": dict(t="Avg value ₹ cr/day", type="cr", pri=2),
     "Market_Cap_Cr": dict(t="Mkt cap ₹ cr", type="cr0", pri=2),
@@ -234,7 +232,7 @@ SPEC = {
     "Group": dict(t="Group", type="grp", pri=1, left=True),
     "Pct_Above_200": dict(t="Above 200 SMA", type="pct0", pri=3),
     "Pct_Stage2": dict(t="Stage 2", type="pct0", pri=3),
-    "Industry_Score": dict(t="Strength", type="bar", pri=1),
+    "Sector_Score": dict(t="Strength", type="bar", pri=1),
     "Stocks": dict(t="Stocks", type="n0", pri=2),
     "Median_RS": dict(t="Median RS", type="n0", pri=2),
     "Avg_RS": dict(t="Avg RS", type="n1", pri=3),
@@ -256,9 +254,9 @@ COLS_PATTERN = ["Symbol", "RS_Rating", "Stage", "TT_Score", "VCP", "VCP_Contract
                 "VCP_Setup", "Pivot", "Pct_To_Pivot", "Close", "Vol_Breakout", "Breakout_Days_Ago",
                 "Breakout_Vol_x", "Vol_x_50d", "Stage1_Base", "Base_Days", "Base_Depth_%", "Liquid",
                 "Avg_Value_Cr", "Market_Cap_Cr", "Sector", "Company Name"]
-COLS_INDUSTRY = ["Rank", "Group", "Industry_Score", "Stocks", "Median_RS", "Avg_RS", "Avg_RS_Change",
-                 "Pct_RS80", "Pct_TT_Pass", "Pct_Above_200", "Pct_Stage2", "TT_Pass_Count", "Blue_Dots",
-                 "Avg_Weighted_Return_%", "Top_Stocks"]
+COLS_SECTOR_STRENGTH = ["Rank", "Group", "Sector_Score", "Stocks", "Median_RS", "Avg_RS", "Avg_RS_Change",
+                        "Pct_RS80", "Pct_TT_Pass", "Pct_Above_200", "Pct_Stage2", "TT_Pass_Count", "Blue_Dots",
+                        "Avg_Weighted_Return_%", "Top_Stocks"]
 
 # ---------------------------------------------------------------- table iframe
 _TABLE_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
