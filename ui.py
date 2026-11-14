@@ -106,7 +106,6 @@ div[data-baseweb="select"]>div,.stTextInput input{border-radius:10px!important}
 .screen-info .kicker{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;opacity:.55;font-weight:700}
 .screen-info .heading{font-size:1.05rem;font-weight:700;line-height:1.2;margin:3px 0}
 .screen-info .description{font-size:.82rem;line-height:1.4;opacity:.7}
-.workspace-card-anchor{height:0;overflow:hidden}
 div[data-testid="stSelectbox"] label{font-size:.76rem!important;font-weight:700!important;letter-spacing:.02em}
 div[data-testid="stSelectbox"] [data-baseweb="select"]>div{min-height:44px!important}
 @media (max-width:900px){.sub{max-width:100%}.kpis{grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:9px}}
@@ -127,8 +126,6 @@ div[data-testid="stSelectbox"] [data-baseweb="select"]>div{min-height:44px!impor
   .meter{padding:10px;border-radius:11px}.meter .mh{font-size:.74rem}.meter .mh b{font-size:1.05rem}
   .advlbl{gap:8px;font-size:.7rem;flex-wrap:wrap}
   .stDownloadButton>button,.stButton>button{min-height:42px}
-  div[data-testid="stHorizontalBlock"]:has(.workspace-card-anchor){display:flex!important;flex-direction:column!important;gap:10px!important}
-  div[data-testid="stHorizontalBlock"]:has(.workspace-card-anchor)>div[data-testid="column"]{width:100%!important;flex:1 1 100%!important}
 }
 @media (max-width:380px){
   .block-container{padding-left:.55rem!important;padding-right:.55rem!important}
