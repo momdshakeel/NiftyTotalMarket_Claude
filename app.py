@@ -147,6 +147,7 @@ n_liquid = int(result["Liquid"].sum())
 market_context = m.market_breadth(result)
 
 # ---------------- Sidebar filters ----------------
+custom_rules = []
 with st.sidebar:
     st.subheader("Filters")
     liquid_only = st.toggle("Liquid stocks only", value=False,
@@ -174,6 +175,53 @@ with st.sidebar:
     pick_basic = (st.multiselect("Basic industry", sorted(result["Basic Industry"].dropna().unique()))
                   if has_cls else [])
     q = st.text_input("Search symbol / company")
+    custom_metric_fields = [
+        "RS_Rating", "RS_Change", "RS_Excess_3M_%", "RS_Excess_6M_%", "Weighted_Return_%",
+        "TT_Score", "RSI14", "Pct_Above_50SMA", "Pct_From_52W_High", "Vol_x_50d",
+        "Up_Down_Vol_Ratio_20D", "Avg_Value_Cr", "Market_Cap_Cr", "Sector_Strength",
+        "Pct_To_Pivot", "Breakout_Vol_x", "Base_Days", "Base_Depth_%",
+    ]
+    metric_options = {
+        f"{ui.SPEC[field]['t']} · {field}": field
+        for field in custom_metric_fields
+        if field in result.columns and field in ui.SPEC
+        and pd.api.types.is_numeric_dtype(result[field].dtype)
+        and not pd.api.types.is_bool_dtype(result[field].dtype)
+    }
+    with st.expander("🧰 Custom screen builder", expanded=False):
+        picked_metrics = st.multiselect(
+            "Add numeric conditions",
+            list(metric_options),
+            max_selections=3,
+            key="custom_screen_metrics",
+            help="Choose up to three numeric fields. Conditions combine with AND.",
+        )
+        if picked_metrics:
+            st.caption("All selected conditions must match. These rules affect stock-list screens only.")
+        for option in picked_metrics:
+            field = metric_options[option]
+            values = pd.to_numeric(result[field], errors="coerce").dropna()
+            if values.empty:
+                continue
+            low, high = float(values.min()), float(values.max())
+            step = max(0.1, (high - low) / 100)
+            middle = float(values.median())
+            q25, q75 = float(values.quantile(.25)), float(values.quantile(.75))
+            st.markdown(f"**{ui.SPEC[field]['t']}**")
+            operator = st.selectbox(
+                "Condition", ["At least", "At most", "Between"],
+                key=f"custom_operator_{field}",
+            )
+            if operator == "Between":
+                lower = st.number_input("From", value=q25, step=step, format="%.2f",
+                                        key=f"custom_lower_{field}")
+                upper = st.number_input("To", value=q75, step=step, format="%.2f",
+                                        key=f"custom_upper_{field}")
+                custom_rules.append((field, operator, lower, upper))
+            else:
+                threshold = st.number_input("Value", value=middle, step=step, format="%.2f",
+                                            key=f"custom_value_{field}")
+                custom_rules.append((field, operator, threshold, None))
     st.divider()
     st.caption(f"Prices as of **{as_of.date()}**  \nUpdated {fetched_at:%d %b %Y, %H:%M} IST  \n" +
                ("Refreshed automatically every weekday evening (~5 pm IST)" if mode == "saved"
@@ -213,6 +261,14 @@ if q.strip():
     s = q.strip().lower()
     df = df[df["Symbol"].str.lower().str.contains(s, regex=False)
             | df["Company Name"].str.lower().str.contains(s, regex=False, na=False)]
+for field, operator, lower_or_value, upper in custom_rules:
+    values = pd.to_numeric(df[field], errors="coerce")
+    if operator == "At least":
+        df = df[values >= lower_or_value]
+    elif operator == "At most":
+        df = df[values <= lower_or_value]
+    else:
+        df = df[(values >= lower_or_value) & (values <= upper)]
 
 top = df[df.TT_Pass & (df.RS_Rating >= pref_rs) & df.RS_Line_Near_High & (df.RSI14 > rsi_min)]
 tt = df[df.TT_Pass]
@@ -354,6 +410,15 @@ def stock_strength_map(frame, key):
 
 def show(frame, name, text, keys=None, sort=("RS_Rating", -1), titles=None):
     ui.note(f"<b>{len(frame)}</b> stocks · {text}")
+    if custom_rules:
+        rule_labels = []
+        for field, operator, lower_or_value, upper in custom_rules:
+            label = ui.SPEC[field]["t"]
+            rule_labels.append(
+                f"{label} {lower_or_value:g}–{upper:g}" if operator == "Between"
+                else f"{label} {'≥' if operator == 'At least' else '≤'} {lower_or_value:g}"
+            )
+        st.caption("Custom conditions (AND): " + " · ".join(rule_labels))
     view = st.segmented_control("View", ["List", "Strength map"], default="List",
                                 key=f"result_view_{name}")
     if view == "Strength map":
@@ -718,7 +783,8 @@ else:
     with f1:
         st.markdown("""<div class="guide-card"><h4>Keep the first pass broad</h4>
         <p>Start with the symbol/company search, sector filter and a modest minimum RS. Then narrow to liquid
-        stocks or raise the RS threshold if the list is still large. Filters affect stock-list tabs; the
+        stocks or raise the RS threshold if the list is still large. Use <b>Custom screen builder</b> in the
+        sidebar to add up to three numeric conditions. Filters affect stock-list screens; the
         Breadth & sectors calculations use the liquid universe independently.</p></div>""", unsafe_allow_html=True)
     with f2:
         st.markdown("""<div class="guide-card"><h4>Open details, then the chart</h4>
